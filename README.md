@@ -1,7 +1,7 @@
 # rl78dec — a Renesas RL78 decompiler
 
 `rl78dec` decompiles Renesas **RL78** firmware to readable pseudo-C, aimed at the
-PlayStation 4/5 **syscon** (system controller) whose MCU is an RL78. It is the
+PlayStation 4 **syscon** (system controller) whose MCU is an RL78. It is the
 RL78 analogue of [`spudec`](https://github.com/zecoxao/spudec) and the Kirk/Spock
 [`startrekdec`](https://github.com/zecoxao/startrekdec): the IDA processor module
 is used purely as a *decoder*, and lifting, control-flow recovery and code
