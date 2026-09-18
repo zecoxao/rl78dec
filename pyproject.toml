@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rl78dec"
+version = "0.1.0"
+description = "Decompiler for Renesas RL78 firmware (PS4/PS5 syscon)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+authors = [{ name = "zecoxao" }]
+keywords = ["rl78", "renesas", "syscon", "ps4", "ps5", "decompiler", "ida", "reverse-engineering"]
+
+[project.urls]
+Homepage = "https://github.com/zecoxao/rl78dec"
+
+[project.scripts]
+rl78dec = "rl78dec.cli:main"
+
+[tool.setuptools]
+packages = ["rl78dec"]
+py-modules = ["rl78dec_plugin"]
