@@ -1,5 +1,5 @@
 """
-rl78dec -- a decompiler for the Renesas RL78, targeting the PlayStation 4/5
+rl78dec -- a decompiler for the Renesas RL78, targeting the PlayStation 4/Vita
 "syscon" system-controller firmware.
 
 IDA's (fail0verflow) RL78 processor module is used purely as a decoder in the
@@ -17,7 +17,7 @@ __version__ = "0.1.0"
 
 BANNER = [
     "/*",
-    " * Decompiled by rl78dec -- Renesas RL78 (PS4/PS5 syscon).",
+    " * Decompiled by rl78dec -- Renesas RL78 (PS4/Vita syscon).",
     " * Registers a/x/ax/bc/de/hl etc. are the machine registers; mem8/mem16",
     " * index data memory (SFRs and saddr cells shown by name).  CY/HF compares",
     " * are unsigned.  Unmodelled opcodes are printed as pseudo-calls.",

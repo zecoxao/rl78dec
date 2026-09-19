@@ -2,7 +2,7 @@
 Renesas RL78 instruction-set description.
 
 The RL78 (S1/S2 core) is a 16-bit Renesas microcontroller; it is the CPU inside
-the PlayStation 4/5 "syscon" system controller, which is what these tools target.
+the PlayStation 4/Vita "syscon" system controller, which is what these tools target.
 This module is the single source of truth for register names, the flag effects of
 each mnemonic, and the memory-map helpers.  The decoder in
 :mod:`rl78dec.decoder` is a faithful port of fail0verflow's IDA processor module

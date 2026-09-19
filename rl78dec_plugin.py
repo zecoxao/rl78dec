@@ -1,5 +1,5 @@
 """
-IDA plugin entry point for rl78dec, the RL78 (PS4/PS5 syscon) decompiler.
+IDA plugin entry point for rl78dec, the RL78 (PS4/Vita syscon) decompiler.
 
 Install by copying this file *and* the ``rl78dec`` package directory together
 into IDA's user plugin directory:
@@ -100,7 +100,7 @@ def _run_all():
 
 class Rl78DecPlugin(ida_idaapi.plugin_t):
     flags = 0
-    comment = "RL78 (PS4/PS5 syscon) decompiler: lifter + structuring + pseudo-C"
+    comment = "RL78 (PS4/Vita syscon) decompiler: lifter + structuring + pseudo-C"
     help = "%s decompiles the current function, %s decompiles everything." % (HOTKEY_ONE, HOTKEY_ALL)
     wanted_name = "RL78 decompiler (rl78dec)"
     wanted_hotkey = HOTKEY_ONE

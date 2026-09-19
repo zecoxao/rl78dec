@@ -22,7 +22,7 @@ def _int(s):
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     ap = argparse.ArgumentParser(prog="rl78dec",
-                                 description="Decompile RL78 (PS4/PS5 syscon) firmware to pseudo-C.")
+                                 description="Decompile RL78 (PS4/Vita syscon) firmware to pseudo-C.")
     ap.add_argument("rom", help="raw RL78 flash dump or FUPD container")
     ap.add_argument("-o", "--out", help="write listing to this file (default: stdout)")
     ap.add_argument("--entry", type=_int, action="append", default=None,
