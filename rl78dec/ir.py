@@ -18,10 +18,11 @@ class Expr:
 
 
 class Const(Expr):
-    __slots__ = ("value", "width")
+    __slots__ = ("value", "width", "name")
 
-    def __init__(self, value, width="b"):
+    def __init__(self, value, width="b", name=None):
         self.width = width
+        self.name = name
         if width == "a":                 # an address: keep 20 bits, never mask to 8
             self.value = value & 0xFFFFF
         elif width == "w":

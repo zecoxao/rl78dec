@@ -12,12 +12,95 @@ from . import ir, sfr
 from . import structure as S
 
 
+def _find_struct_member(struct_def, offset):
+    if not struct_def or "members" not in struct_def:
+        return None
+    for m in struct_def["members"]:
+        if m["offset"] == offset:
+            return m["name"]
+    for m in struct_def["members"]:
+        if m["offset"] <= offset < m["offset"] + m.get("size", 1):
+            return m["name"]
+    return None
+
+
+def _extract_base_and_offset(addr):
+    """If addr is a base var + constant offset, return (var_node, offset)."""
+    if isinstance(addr, (ir.Var, ir.Reg)):
+        return addr, 0
+    if isinstance(addr, ir.Bin) and addr.op == "+":
+        if isinstance(addr.l, (ir.Var, ir.Reg)) and isinstance(addr.r, (ir.Const, int)):
+            return addr.l, (addr.r.value if isinstance(addr.r, ir.Const) else addr.r)
+        if isinstance(addr.r, (ir.Var, ir.Reg)) and isinstance(addr.l, (ir.Const, int)):
+            return addr.r, (addr.l.value if isinstance(addr.l, ir.Const) else addr.l)
+    if isinstance(addr, ir.Bin) and addr.op == "-":
+        if isinstance(addr.l, (ir.Var, ir.Reg)) and isinstance(addr.r, (ir.Const, int)):
+            return addr.l, -(addr.r.value if isinstance(addr.r, ir.Const) else addr.r)
+    return None, None
+
+
+def _expr_struct_type(e, var_structs, symbol_structs):
+    if isinstance(e, ir.Const):
+        name = getattr(e, "name", None)
+        if name and name in symbol_structs:
+            return symbol_structs[name]
+        if e.value in symbol_structs:
+            return symbol_structs[e.value]
+    elif isinstance(e, (ir.Var, ir.Reg)):
+        return var_structs.get(e.name)
+    elif isinstance(e, ir.Bin):
+        if e.op in ("+", "-"):
+            st = _expr_struct_type(e.l, var_structs, symbol_structs)
+            if st:
+                return st
+            if e.op == "+":
+                st = _expr_struct_type(e.r, var_structs, symbol_structs)
+                if st:
+                    return st
+    return None
+
+
+def _infer_struct_pointers(func, struct_defs, symbol_structs, user_types=None, sig=None):
+    var_structs = {}
+    if user_types:
+        for vname, tstr in user_types.items():
+            if not isinstance(tstr, str):
+                continue
+            clean = tstr.strip()
+            if clean.endswith("*"):
+                base = clean[:-1].strip()
+                if base in struct_defs:
+                    var_structs[vname] = base
+    if sig and getattr(sig, "params", None):
+        for p in sig.params:
+            if getattr(p, "type_str", None) and p.type_str.strip().endswith("*"):
+                base = p.type_str.strip()[:-1].strip()
+                if base in struct_defs:
+                    var_structs[p.name] = base
+
+    if not struct_defs or not symbol_structs:
+        return var_structs
+
+    changed = True
+    while changed:
+        changed = False
+        for blk in func.blocks.values():
+            for s in blk.stmts:
+                if isinstance(s, ir.Assign) and isinstance(s.dst, (ir.Var, ir.Reg)):
+                    st = _expr_struct_type(s.src, var_structs, symbol_structs)
+                    if st and var_structs.get(s.dst.name) != st:
+                        var_structs[s.dst.name] = st
+                        changed = True
+    return var_structs
+
+
 class _Emit:
-    def __init__(self, namer, block_starts=frozenset(), hidden=frozenset(), user_renames=None):
+    def __init__(self, namer, block_starts=frozenset(), hidden=frozenset(), user_renames=None, var_structs=None):
         self.namer = namer
         self.block_starts = block_starts
         self.hidden = hidden
         self.user_renames = user_renames or {}
+        self.var_structs = dict(var_structs or {})
         self.used_labels = set()
         self._pending = []
 
@@ -26,6 +109,16 @@ class _Emit:
 
     def expr(self, e, top=True):
         if isinstance(e, ir.Const):
+            if getattr(e, "name", None):
+                return self.user_renames.get(e.name, e.name)
+            if hasattr(self.namer, "cell_names") and e.value in self.namer.cell_names:
+                n = self.namer.cell_names[e.value]
+                return self.user_renames.get(n, n)
+            if hasattr(self.namer, "symbol_structs") and e.value in self.namer.symbol_structs:
+                if hasattr(self.namer, "_lookup"):
+                    n = self.namer._lookup(e.value)
+                    if n:
+                        return self.user_renames.get(n, n)
             if e.width == "a":
                 return "0x%05X" % e.value
             return str(e.value) if e.value < 10 else "0x%X" % e.value
@@ -61,14 +154,42 @@ class _Emit:
             return True
         return False
 
+    def _struct_deref(self, addr):
+        if not self.var_structs or not getattr(self.namer, "struct_defs", None):
+            return None
+        base_var, offset = _extract_base_and_offset(addr)
+        if base_var and offset is not None:
+            st_name = self.var_structs.get(base_var.name)
+            if st_name and st_name in self.namer.struct_defs:
+                mname = _find_struct_member(self.namer.struct_defs[st_name], offset)
+                if mname:
+                    vname = self.user_renames.get(base_var.name, base_var.name)
+                    return f"{vname}->{mname}"
+        return None
+
     def _mem(self, e):
         w = "16" if e.width == "w" else "8"
+        if getattr(e, "name", None):
+            return self.user_renames.get(e.name, e.name)
+
+        sd = self._struct_deref(e.addr)
+        if sd:
+            return sd
+
         addr = e.addr
         if isinstance(addr, ir.Const):
             addr = addr.value
 
         # Check if addr is an addition of a base global address and an index
         if isinstance(addr, ir.Bin) and addr.op == "+":
+            # Check if one side is an explicitly named constant
+            if isinstance(addr.l, ir.Const) and getattr(addr.l, "name", None):
+                base_name = self.user_renames.get(addr.l.name, addr.l.name)
+                return "%s[%s]" % (base_name, self.expr(addr.r))
+            if isinstance(addr.r, ir.Const) and getattr(addr.r, "name", None):
+                base_name = self.user_renames.get(addr.r.name, addr.r.name)
+                return "%s[%s]" % (base_name, self.expr(addr.l))
+
             l_val = addr.l.value if isinstance(addr.l, ir.Const) else (addr.l if isinstance(addr.l, int) else None)
             r_val = addr.r.value if isinstance(addr.r, ir.Const) else (addr.r if isinstance(addr.r, int) else None)
 
@@ -145,44 +266,45 @@ class _Emit:
             elif isinstance(n, S.SStmt):
                 if id(n.stmt) in self.hidden:
                     continue
-                self._pending.append((ind, pad + self.stmt(n.stmt), None))
+                self._pending.append((ind, pad + self.stmt(n.stmt), getattr(n.stmt, "ea", None)))
             elif isinstance(n, S.SRet):
+                ret_ea = getattr(n, "ea", None)
                 if getattr(n, "val", None) is not None:
-                    self._pending.append((ind, pad + "return %s;" % self.expr(n.val), None))
+                    self._pending.append((ind, pad + "return %s;" % self.expr(n.val), ret_ea))
                 else:
-                    self._pending.append((ind, pad + "return;", None))
+                    self._pending.append((ind, pad + "return;", ret_ea))
 
             elif isinstance(n, S.SGoto):
                 if n.ea in self.block_starts:
                     self.used_labels.add(n.ea)
-                    self._pending.append((ind, pad + "goto %s;" % self.namer.label(n.ea), None))
+                    self._pending.append((ind, pad + "goto %s;" % self.namer.label(n.ea), n.ea))
                 else:                       # out-of-function tail jump
-                    self._pending.append((ind, pad + "JUMPOUT(%s);" % self._ext(n.ea), None))
+                    self._pending.append((ind, pad + "JUMPOUT(%s);" % self._ext(n.ea), n.ea))
             elif isinstance(n, S.SIfGoto):
                 if n.ea in self.block_starts:
                     self.used_labels.add(n.ea)
                     tail = "goto %s;" % self.namer.label(n.ea)
                 else:
                     tail = "JUMPOUT(%s);" % self._ext(n.ea)
-                self._pending.append((ind, pad + "if (%s) %s" % (self.expr(n.cond), tail), None))
+                self._pending.append((ind, pad + "if (%s) %s" % (self.expr(n.cond), tail), getattr(n, "ea", None)))
             elif isinstance(n, S.SBreak):
-                self._pending.append((ind, pad + "break;", None))
+                self._pending.append((ind, pad + "break;", getattr(n, "ea", None)))
             elif isinstance(n, S.SBreakIf):
-                self._pending.append((ind, pad + "if (%s) break;" % self.expr(n.cond), None))
+                self._pending.append((ind, pad + "if (%s) break;" % self.expr(n.cond), getattr(n, "ea", None)))
             elif isinstance(n, S.SContinue):
                 if n.cond is None:
-                    self._pending.append((ind, pad + "continue;", None))
+                    self._pending.append((ind, pad + "continue;", getattr(n, "ea", None)))
                 else:
-                    self._pending.append((ind, pad + "if (%s) continue;" % self.expr(n.cond), None))
+                    self._pending.append((ind, pad + "if (%s) continue;" % self.expr(n.cond), getattr(n, "ea", None)))
             elif isinstance(n, S.SIf):
-                self._pending.append((ind, pad + "if (%s) {" % self.expr(n.cond), None))
+                self._pending.append((ind, pad + "if (%s) {" % self.expr(n.cond), getattr(n, "ea", None)))
                 self.emit(n.then, ind + 1)
                 if n.els:
                     self._pending.append((ind, pad + "} else {", None))
                     self.emit(n.els, ind + 1)
                 self._pending.append((ind, pad + "}", None))
             elif isinstance(n, S.SSwitch):
-                self._pending.append((ind, pad + "switch (%s) {" % self.expr(n.expr), None))
+                self._pending.append((ind, pad + "switch (%s) {" % self.expr(n.expr), getattr(n, "ea", None)))
                 for vals, body in n.cases:
                     for v in sorted(vals):
                         self._pending.append((ind, pad + "case %d:" % v, None))
@@ -206,11 +328,11 @@ class _Emit:
             tail = body[-1].cond
             body = body[:-1]
         if tail is not None:
-            self._pending.append((ind, pad + "do {", None))
+            self._pending.append((ind, pad + "do {", getattr(n, "ea", None)))
             self.emit(body, ind + 1)
             self._pending.append((ind, pad + "} while (%s);" % self.expr(tail), None))
         else:
-            self._pending.append((ind, pad + "while (1) {", None))
+            self._pending.append((ind, pad + "while (1) {", getattr(n, "ea", None)))
             self.emit(body, ind + 1)
             self._pending.append((ind, pad + "}", None))
 
@@ -220,13 +342,20 @@ class _Emit:
 
     def flush(self):
         out = []
-        for ind, text, label_ea in self._pending:
-            if label_ea is not None:
-                if label_ea in self.used_labels:
-                    out.append("%s:" % self.namer.label(label_ea))
+        line_eas = []
+        for ind, text, ea in self._pending:
+            if text is None:
+                if ea in self.used_labels:
+                    out.append("%s:" % self.namer.label(ea))
+                    line_eas.append(ea)
                 continue
             out.append(text)
-        return out
+            line_eas.append(ea)
+        return out, line_eas
+
+
+class CodeLines(list):
+    pass
 
 
 def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_renames=None, user_types=None):
@@ -238,10 +367,14 @@ def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_ren
     if user_types:
         u_types.update(user_types)
 
-    em = _Emit(namer, block_starts=frozenset(func.blocks), hidden=hidden, user_renames=u_renames)
+    struct_defs = getattr(namer, "struct_defs", {}) or {}
+    symbol_structs = getattr(namer, "symbol_structs", {}) or {}
+    var_structs = _infer_struct_pointers(func, struct_defs, symbol_structs, user_types=u_types, sig=sig)
+
+    em = _Emit(namer, block_starts=frozenset(func.blocks), hidden=hidden, user_renames=u_renames, var_structs=var_structs)
     em.emit(tree, 1)
-    body = em.flush()
-    out = []
+    body, body_eas = em.flush()
+    out = CodeLines()
     if banner:
         out.extend(banner)
     if sig is not None:
@@ -266,8 +399,11 @@ def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_ren
         for name, (var, width) in sorted(frame_info.locals.items(), key=lambda kv: kv[1][0].offset):
             eff_name = u_renames.get(name, name)
             default_t = "uint16_t" if width == "w" else "uint8_t"
+            if name in var_structs:
+                default_t = f"{var_structs[name]} *"
             tstr = u_types.get(name, u_types.get(eff_name, default_t))
-            decls.append("    %s %s;" % (tstr, eff_name))
+            sep = "" if tstr.endswith("*") else " "
+            decls.append("    %s%s%s;" % (tstr, sep, eff_name))
     if frame_info and getattr(frame_info, "virtual_vars", None):
         def sort_key(kv):
             name = kv[0]
@@ -279,13 +415,18 @@ def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_ren
                 continue
             eff_name = u_renames.get(name, name)
             default_t = "uint16_t" if width == "w" else "uint8_t"
+            if name in var_structs:
+                default_t = f"{var_structs[name]} *"
             tstr = u_types.get(name, u_types.get(eff_name, default_t))
-            decls.append("    %s %s;" % (tstr, eff_name))
+            sep = "" if tstr.endswith("*") else " "
+            decls.append("    %s%s%s;" % (tstr, sep, eff_name))
     if decls:
         out.extend(decls)
         if body:
             out.append("")
+    header_count = len(out)
     out.extend(body)
     out.append("}")
+    out.line_eas = [None] * header_count + body_eas + [None]
     return out
 

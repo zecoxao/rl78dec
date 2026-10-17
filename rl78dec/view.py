@@ -88,9 +88,11 @@ class _DecompilerView(ida_kernwin.simplecustviewer_t):
         self.raw_lines = list(fn.lines)
 
         self.ClearLines()
-        for ln in fn.lines:
+        fn_line_eas = getattr(fn, "line_eas", None) or getattr(fn.lines, "line_eas", None)
+        for i, ln in enumerate(fn.lines):
             self.AddLine(highlight.colorize(ln))
-            self.line_ea.append(_line_ea(ln))
+            ea = fn_line_eas[i] if (fn_line_eas and i < len(fn_line_eas)) else None
+            self.line_ea.append(ea if ea is not None else _line_ea(ln))
         self.Refresh()
 
     def show_func(self, ea):
@@ -256,15 +258,26 @@ class _DecompilerView(ida_kernwin.simplecustviewer_t):
     def jump_disasm(self):
         """Jump to the linear address corresponding to current line or token."""
         word, lineno = self.get_word_under_cursor()
-        # If word is a function or label address
-        m = _EA.search(word) or _ADDR_HEX.search(word)
-        if m:
+        if word:
+            # Check if word is a named symbol in IDA (variable, function, label, SFR)
             try:
-                target_ea = int(m.group(1), 16)
-                idaapi.jumpto(target_ea)
-                return True
-            except ValueError:
+                import ida_name, ida_idaapi
+                target_ea = ida_name.get_name_ea(ida_idaapi.BADADDR, word)
+                if target_ea != ida_idaapi.BADADDR:
+                    idaapi.jumpto(target_ea)
+                    return True
+            except Exception:
                 pass
+
+            # If word is a function or label address
+            m = _EA.search(word) or _ADDR_HEX.search(word)
+            if m:
+                try:
+                    target_ea = int(m.group(1), 16)
+                    idaapi.jumpto(target_ea)
+                    return True
+                except ValueError:
+                    pass
 
         if lineno is not None and lineno < len(self.line_ea):
             ea = self.line_ea[lineno]

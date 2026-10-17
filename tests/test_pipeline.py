@@ -147,6 +147,98 @@ def test_global_memory_access():
     print("ok  test_global_memory_access")
 
 
+def test_named_variable_constant():
+    # ADDW AX, #0x2A0E (0x04 0x0E 0x2A) ; RET (0xD7)
+    raw = bytes([0x04, 0x0E, 0x2A, 0xD7])
+    buf = bytearray(0x100)
+    buf[:len(raw)] = raw
+
+    # 1. Test via cell_names mapping
+    prog = decompile_image(buf, entries=[0], cell_names={0x2A0E: "kermit_cmd_tableR"})
+    text = "\n".join(prog.funcs[0].lines)
+    assert "kermit_cmd_tableR" in text, text
+    assert "0x2A0E" not in text, text
+    assert hasattr(prog.funcs[0], "line_eas")
+    assert prog.funcs[0].line_eas is not None
+
+    # 2. Test via direct instruction operand name annotation
+    insns, calls = decoder.decode(buf, entries=[0], base=0)
+    assert 0 in insns and len(insns[0].ops) >= 2
+    insns[0].ops[1].name = "kermit_cmd_tableR"
+    from rl78dec import cfg, opt, structure, cgen, frame, abi, vars
+    from rl78dec.names import Namer
+    f = cfg.build_func(insns, 0, {0})
+    frame_info = frame.analyze_frame(f)
+    opt.optimize(f)
+    sig = abi.analyze_calling_convention(f, frame_info)
+    vars.recover_variables(f, sig, frame_info)
+    tree = structure.structure(f)
+    lines = cgen.generate(f, tree, Namer(), frame_info=frame_info, sig=sig)
+    text2 = "\n".join(lines)
+    assert "kermit_cmd_tableR" in text2, text2
+    assert "0x2A0E" not in text2, text2
+
+    print("ok  test_named_variable_constant")
+
+
+def test_struct_pointer_cascading():
+    from rl78dec import decoder, cfg, opt, structure, cgen, frame, abi, vars
+    from rl78dec.names import Namer
+
+    # Byte sequence:
+    # 00: ADDW AX, #0x2A0E  (kermit_cmd_tableR)
+    # 03: MOVW DE, AX       (DE = AX)
+    # 04: MOV ES, #0
+    # 06: MOVW AX, ES:[DE]  (offset 0 -> id)
+    # 08: MOV A, ES:[DE+2]  (offset 2 -> auth)
+    # 0B: MOV A, ES:[DE+6]  (offset 6 -> func)
+    # 0E: MOVW AX, ES:[DE+4](offset 4 -> func)
+    # 11: RET
+    buf = bytes([
+        0x04, 0x0E, 0x2A,
+        0x14,
+        0x41, 0x00,
+        0x11, 0xA9,
+        0x11, 0x8A, 0x02,
+        0x11, 0x8A, 0x06,
+        0x11, 0xAA, 0x04,
+        0xD7
+    ])
+
+    namer = Namer(
+        struct_defs={
+            'kermit_cmd0': {
+                'size': 8,
+                'members': [
+                    {'offset': 0, 'size': 2, 'name': 'id', 'type': 'int'},
+                    {'offset': 2, 'size': 2, 'name': 'auth', 'type': 'int'},
+                    {'offset': 4, 'size': 4, 'name': 'func', 'type': 'void (*)()'},
+                ]
+            }
+        },
+        symbol_structs={'kermit_cmd_tableR': 'kermit_cmd0', 0x2A0E: 'kermit_cmd0'}
+    )
+
+    insns, calls = decoder.decode(buf, entries=[0], base=0)
+    insns[0].ops[1].name = 'kermit_cmd_tableR'
+    f = cfg.build_func(insns, 0, {0})
+    frame_info = frame.analyze_frame(f)
+    opt.optimize(f)
+    sig = abi.analyze_calling_convention(f, frame_info)
+    vars.recover_variables(f, sig, frame_info)
+    tree = structure.structure(f)
+    lines = cgen.generate(f, tree, namer, frame_info=frame_info, sig=sig)
+    text = '\n'.join(lines)
+
+    assert "kermit_cmd0 *v1;" in text, text
+    assert "v1->id" in text, text
+    assert "v1->auth" in text, text
+    assert "v1->func" in text, text
+    assert "es_mem" not in text, text
+
+    print("ok  test_struct_pointer_cascading")
+
+
 if __name__ == "__main__":
     test_decode_fields()
     test_all_first_bytes()
@@ -154,4 +246,6 @@ if __name__ == "__main__":
     test_switch_structuring()
     test_coalesce_arithmetic()
     test_global_memory_access()
+    test_named_variable_constant()
+    test_struct_pointer_cascading()
     print("\nall tests passed")

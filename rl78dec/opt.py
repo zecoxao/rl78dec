@@ -98,10 +98,12 @@ class Env:
         self.bank = bank              # active register bank (0..3 or None for unknown)
         self.atom_consts = {}         # atom (str) -> int (0..255)
         self.copies = {}              # reg_name (str) -> Expr
+        self.const_names = {}         # reg_name (str) -> str
 
     def clear(self):
         self.atom_consts.clear()
         self.copies.clear()
+        self.const_names.clear()
 
     def set_bank(self, bank):
         if self.bank != bank:
@@ -111,6 +113,10 @@ class Env:
     def clear_gprs(self):
         for a in regs.GPR_ATOMS:
             self.atom_consts.pop(a, None)
+            self.const_names.pop(a, None)
+        for pair in regs.PAIRS:
+            if any(a in regs.GPR_ATOMS for a in regs.atoms(pair)):
+                self.const_names.pop(pair, None)
         to_del = [k for k, v in self.copies.items()
                   if any(a in regs.GPR_ATOMS for a in regs.atoms(k)) or
                      _mentions_any_atom(v, regs.GPR_ATOMS)]
@@ -118,27 +124,33 @@ class Env:
             self.copies.pop(k, None)
 
     def lookup_const(self, reg_name):
+        name = self.const_names.get(reg_name)
         if reg_name in regs.PAIRS:
             v = regs.compose(reg_name, self.atom_consts)
             if v is not None:
-                return ir.Const(v, "w")
+                return ir.Const(v, "w", name=name)
             return None
         v = self.atom_consts.get(reg_name)
         if v is not None:
-            return ir.Const(v, "b")
+            return ir.Const(v, "b", name=name)
         return None
 
     def kill(self, reg_name):
         target_atoms = set(regs.atoms(reg_name))
         for a in target_atoms:
             self.atom_consts.pop(a, None)
+            self.const_names.pop(a, None)
+            for pair in regs.PAIRS:
+                if a in regs.atoms(pair):
+                    self.const_names.pop(pair, None)
+        self.const_names.pop(reg_name, None)
         to_del = [k for k, v in self.copies.items()
                   if bool(set(regs.atoms(k)) & target_atoms) or
                      _mentions_any_atom(v, target_atoms)]
         for k in to_del:
             self.copies.pop(k, None)
 
-    def set_const(self, reg_name, val):
+    def set_const(self, reg_name, val, name=None):
         self.kill(reg_name)
         if reg_name in regs.PAIRS:
             decomp = regs.decompose(reg_name, val)
@@ -146,6 +158,8 @@ class Env:
                 self.atom_consts[a] = byte_val
         else:
             self.atom_consts[reg_name] = val & 0xFF
+        if name:
+            self.const_names[reg_name] = name
 
     def set_copy(self, dst_name, src_expr):
         self.kill(dst_name)
@@ -163,12 +177,12 @@ class Env:
         self.kill(b_reg)
 
         if old_b_const is not None:
-            self.set_const(a_reg, old_b_const.value)
+            self.set_const(a_reg, old_b_const.value, getattr(old_b_const, "name", None))
         elif old_b_copy is not None:
             self.set_copy(a_reg, old_b_copy)
 
         if old_a_const is not None:
-            self.set_const(b_reg, old_a_const.value)
+            self.set_const(b_reg, old_a_const.value, getattr(old_a_const, "name", None))
         elif old_a_copy is not None:
             self.set_copy(b_reg, old_a_copy)
 
@@ -390,7 +404,7 @@ def _opt_block(block, default_bank=0):
                     env.set_bank(None)
                     env.kill("psw")
                 elif isinstance(s.src, ir.Const):
-                    env.set_const(s.dst.name, s.src.value)
+                    env.set_const(s.dst.name, s.src.value, getattr(s.src, "name", None))
                 elif isinstance(s.src, (ir.Reg, ir.Var)):
                     env.set_copy(s.dst.name, s.src)
                 else:

@@ -26,10 +26,10 @@ from . import isa
 
 class Operand:
     __slots__ = ("mode", "reg", "value", "addr", "base_reg", "disp",
-                 "bit", "base", "width", "es")
+                 "bit", "base", "width", "es", "name")
 
     def __init__(self, mode, reg=None, value=0, addr=0, base_reg=None,
-                 disp=0, bit=0, base=None, width="b", es=False):
+                 disp=0, bit=0, base=None, width="b", es=False, name=None):
         self.mode = mode
         self.reg = reg
         self.value = value
@@ -40,6 +40,7 @@ class Operand:
         self.base = base
         self.width = width
         self.es = es
+        self.name = name
 
 
 class Insn:
