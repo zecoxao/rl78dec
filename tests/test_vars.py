@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from rl78dec import abi, cfg, frame, ir, vars
+from rl78dec import abi, cfg, frame, ir, vars, opt
 
 
 def test_vars_loop_induction():
@@ -253,6 +253,106 @@ def test_vars_byte_shift_disjoint_webs():
     print("ok  test_vars_byte_shift_disjoint_webs")
 
 
+def test_swap_sandwich_elimination():
+    # Simulates compiler idiom:
+    # xch a, x
+    # and a, #40h
+    # xch a, x
+    f = cfg.Func(0x9000)
+    b = cfg.Block(0x9000)
+    b.stmts = [
+        ir.Swap(0x9000, ir.Reg("a"), ir.Reg("x")),
+        ir.Assign(0x9001, ir.Reg("a"), ir.Bin("&", ir.Reg("a"), ir.Const(0x40, "b"))),
+        ir.Swap(0x9003, ir.Reg("a"), ir.Reg("x")),
+        ir.Ret(0x9004),
+    ]
+    f.blocks[0x9000] = b
+
+    opt.optimize(f)
+
+    # After optimization, Swaps should be completely gone, and statement should operate on 'x' directly
+    swaps = [s for s in b.stmts if isinstance(s, ir.Swap)]
+    assert len(swaps) == 0, f"Expected 0 swaps, found {len(swaps)}"
+    assigns = [s for s in b.stmts if isinstance(s, ir.Assign)]
+    assert len(assigns) == 1
+    assert assigns[0].dst == ir.Reg("x")
+    assert assigns[0].src == ir.Bin("&", ir.Reg("x"), ir.Const(0x40, "b"))
+    print("ok  test_swap_sandwich_elimination")
+
+
+def test_swap_standalone_lowering_and_recovery():
+    # Standalone swap of variables/registers lowered and recovered cleanly without Swap remaining
+    f = cfg.Func(0x9100)
+    b = cfg.Block(0x9100)
+    b.stmts = [
+        ir.Assign(0x9100, ir.Reg("a"), ir.Const(1, "b")),
+        ir.Assign(0x9102, ir.Reg("b"), ir.Const(2, "b")),
+        ir.Swap(0x9104, ir.Reg("a"), ir.Reg("b")),
+        ir.Ret(0x9106),
+    ]
+    f.blocks[0x9100] = b
+    opt.optimize(f)
+
+    # After opt.optimize, Swap must be lowered
+    assert not any(isinstance(s, ir.Swap) for s in b.stmts)
+    print("ok  test_swap_standalone_lowering_and_recovery")
+
+
+def test_vars_dword_call_return_subregister_recovery():
+    # Simulates sub_35FB calling sub_A5EC:
+    # call sub_A5EC (returns de:bc, width="d")
+    # a = e
+    # saddr_D5 = a
+    # bc = bc + 0x16
+    f = cfg.Func(0x35FB)
+    b = cfg.Block(0x35FB)
+    s_call = ir.Call(0x360B, target=0xA5EC, dst=ir.Reg("de:bc", width="d"))
+    s_mov_e = ir.Assign(0x360F, ir.Reg("a"), ir.Reg("e"))
+    mem_d5 = ir.Mem(ir.Const(0xFFED5, width="a"), name="saddr_D5")
+    s_save = ir.Assign(0x3610, mem_d5, ir.Reg("a"))
+    s_add_bc = ir.Assign(0x3613, ir.Reg("bc"), ir.Bin("+", ir.Reg("bc"), ir.Const(0x16)))
+    s_ret = ir.Ret(0x3679, val=ir.Reg("bc"))
+    b.stmts = [s_call, s_mov_e, s_save, s_add_bc, s_ret]
+    f.blocks[0x35FB] = b
+    fi = frame.FrameInfo(f)
+
+    vars.recover_variables(f, None, fi)
+
+    # Call destination should be a virtual variable with width "d" (uint32_t)
+    assert isinstance(s_call.dst, ir.Var)
+    assert s_call.dst.width == "d"
+    call_v = s_call.dst.name
+
+    # Check that saddr_D5 assignment is derived from call_v >> 16 and NOT an uninitialized variable
+    save_stmt = [s for s in b.stmts if isinstance(s, ir.Assign) and s.dst == mem_d5][0]
+    # save_stmt.src should be (uint8_t)(call_v >> 16) or Bin(">>", call_v, 16)
+    assert (
+        isinstance(save_stmt.src, ir.Un)
+        and save_stmt.src.op == "(uint8_t)"
+        and isinstance(save_stmt.src.e, ir.Bin)
+        and save_stmt.src.e.l.name == call_v
+    ) or (
+        isinstance(save_stmt.src, ir.Bin)
+        and save_stmt.src.l.name == call_v
+    )
+
+    # Check that s_ret.val or bc addition uses (uint16_t)call_v + 16 (inlined or assigned)
+    ret_bin = s_ret.val if (s_ret.val and isinstance(s_ret.val, ir.Bin)) else None
+    if ret_bin is None:
+        add_stmts = [s for s in b.stmts if isinstance(s, ir.Assign) and isinstance(s.src, ir.Bin) and s.src.op == "+"]
+        assert len(add_stmts) > 0
+        ret_bin = add_stmts[0].src
+    assert ret_bin.op == "+"
+    add_l = ret_bin.l
+    if isinstance(add_l, ir.Un):
+        add_l = add_l.e
+    assert add_l.name == call_v
+
+    # Verify virtual variable width in frame_info
+    assert fi.virtual_vars[call_v][1] == "d"
+    print("ok  test_vars_dword_call_return_subregister_recovery")
+
+
 if __name__ == "__main__":
     test_vars_loop_induction()
     test_vars_disjoint_register_reuse()
@@ -262,4 +362,7 @@ if __name__ == "__main__":
     test_vars_fold_call_return_with_subsequent_branch()
     test_vars_preserve_subregister_pair_writes()
     test_vars_byte_shift_disjoint_webs()
+    test_swap_sandwich_elimination()
+    test_swap_standalone_lowering_and_recovery()
+    test_vars_dword_call_return_subregister_recovery()
     print("All vars tests passed.")

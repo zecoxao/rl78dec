@@ -9,7 +9,9 @@ into IDA's user plugin directory:
 It runs on a database opened with fail0verflow's RL78 processor module
 (https://github.com/fail0verflow/rl78-ida-proc):
 
-    Ctrl-Shift-S   decompile the function under the cursor
+    F5             decompile the function under the cursor (or refresh)
+    Tab            switch between disassembly and pseudocode
+    Ctrl-Shift-S   legacy decompile shortcut
     Ctrl-F5        decompile every function in the database
 """
 
@@ -18,17 +20,30 @@ import sys
 import time
 import traceback
 
-import ida_idaapi
-import ida_idp
-import ida_kernwin
-import ida_funcs
+try:
+    import ida_idaapi
+    import ida_idp
+    import ida_kernwin
+    import ida_funcs
+except ImportError:
+    ida_idaapi = None
+    ida_idp = None
+    ida_kernwin = None
+    ida_funcs = None
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-HOTKEY_ONE = "Ctrl-Shift-S"
+HOTKEY_DECOMPILE = "F5"
+HOTKEY_TAB = "Tab"
+HOTKEY_LEGACY = "Ctrl-Shift-S"
 HOTKEY_ALL = "Ctrl-F5"
+
+ACTION_DECOMPILE = "rl78dec:decompile"
+ACTION_TAB = "rl78dec:tab_switch"
+MENU_PSEUDOCODE_PATH = "View/Open subviews/Generate pseudocode"
+MENU_PLUGIN_PATH = "Edit/Plugins/RL78 decompiler (rl78dec)"
 
 _views = []
 _hotkeys = []
@@ -41,6 +56,30 @@ def _is_rl78():
         return False
 
 
+class _DecompileActionHandler(ida_kernwin.action_handler_t if ida_kernwin else object):
+    def activate(self, ctx):
+        _run_one()
+        return 1
+
+    def update(self, ctx):
+        if not ida_kernwin:
+            return 0
+        return ida_kernwin.AST_ENABLE_ALWAYS
+
+
+class _TabActionHandler(ida_kernwin.action_handler_t if ida_kernwin else object):
+    def activate(self, ctx):
+        _run_one()
+        return 1
+
+    def update(self, ctx):
+        if not ida_kernwin:
+            return 0
+        if getattr(ctx, "widget_type", None) == getattr(ida_kernwin, "BWN_DISASM", -1):
+            return ida_kernwin.AST_ENABLE_FOR_WIDGET
+        return ida_kernwin.AST_DISABLE_FOR_WIDGET
+
+
 def _run_one():
     from rl78dec import ida_bridge, view
     if not _is_rl78():
@@ -48,16 +87,24 @@ def _run_one():
                             "Open it with fail0verflow's RL78 processor module first.")
         return
     ea = ida_kernwin.get_screen_ea()
-    if ida_funcs.get_func(ea) is None:
-        ida_kernwin.warning("rl78dec: no function at 0x%X. Press 'P' to create one." % ea)
+    f = ida_funcs.get_func(ea) if (ea is not None and ea != ida_idaapi.BADADDR) else None
+
+    # If the pseudocode viewer is active and focused, get_screen_ea() can be BADADDR
+    if f is None and getattr(view, "_active_viewer", None) is not None and view._active_viewer.current_func_ea is not None:
+        start_ea = view._active_viewer.current_func_ea
+    elif f is not None:
+        start_ea = f.start_ea
+    else:
+        ida_kernwin.warning("rl78dec: no function at 0x%X. Press 'P' to create one." % (ea if ea is not None else 0))
         return
+
     try:
-        fn = ida_bridge.decompile_one(ea)
+        fn = ida_bridge.decompile_one(start_ea)
     except Exception:
         ida_kernwin.warning("rl78dec failed:\n\n%s" % traceback.format_exc())
         return
     v = view.show(fn)
-    if v is not None:
+    if v is not None and v not in _views:
         _views.append(v)
     print("rl78dec: %s -> %d blocks" % (fn.name, len(fn.cfg.blocks)))
 
@@ -94,31 +141,94 @@ def _run_all():
         except Exception as exc:
             ida_kernwin.warning("rl78dec: could not write %s:\n%s" % (path, exc))
     v = view.show_listing("rl78dec - all functions", lines)
-    if v is not None:
+    if v is not None and v not in _views:
         _views.append(v)
 
 
-class Rl78DecPlugin(ida_idaapi.plugin_t):
-    flags = 0
-    comment = "RL78 (PS4/Vita syscon) decompiler: lifter + structuring + pseudo-C"
-    help = "%s decompiles the current function, %s decompiles everything." % (HOTKEY_ONE, HOTKEY_ALL)
+def _register_actions():
+    if not ida_kernwin:
+        return
+    ida_kernwin.unregister_action(ACTION_DECOMPILE)
+    desc = ida_kernwin.action_desc_t(
+        ACTION_DECOMPILE,
+        "RL78 Pseudocode",
+        _DecompileActionHandler(),
+        HOTKEY_DECOMPILE,
+        "Decompile current RL78 function to pseudocode (F5)",
+        -1
+    )
+    if ida_kernwin.register_action(desc):
+        ida_kernwin.attach_action_to_menu(MENU_PSEUDOCODE_PATH, ACTION_DECOMPILE, ida_kernwin.SETMENU_APP)
+        ida_kernwin.attach_action_to_menu(MENU_PLUGIN_PATH, ACTION_DECOMPILE, ida_kernwin.SETMENU_APP)
+
+    ida_kernwin.unregister_action(ACTION_TAB)
+    desc_tab = ida_kernwin.action_desc_t(
+        ACTION_TAB,
+        "Switch to Pseudocode",
+        _TabActionHandler(),
+        HOTKEY_TAB,
+        "Switch between disassembly and pseudocode (Tab)",
+        -1
+    )
+    ida_kernwin.register_action(desc_tab)
+
+
+def _unregister_actions():
+    if not ida_kernwin:
+        return
+    try:
+        ida_kernwin.detach_action_from_menu(MENU_PSEUDOCODE_PATH, ACTION_DECOMPILE)
+    except Exception:
+        pass
+    try:
+        ida_kernwin.detach_action_from_menu(MENU_PLUGIN_PATH, ACTION_DECOMPILE)
+    except Exception:
+        pass
+    try:
+        ida_kernwin.unregister_action(ACTION_DECOMPILE)
+    except Exception:
+        pass
+    try:
+        ida_kernwin.unregister_action(ACTION_TAB)
+    except Exception:
+        pass
+
+
+class Rl78DecPlugin(ida_idaapi.plugin_t if ida_idaapi else object):
+    flags = ida_idaapi.PLUGIN_PROC if ida_idaapi else 0
+    comment = "This is a decompilation plugin."
+    help = "%s decompiles the current function, %s decompiles everything." % (HOTKEY_DECOMPILE, HOTKEY_ALL)
     wanted_name = "RL78 decompiler (rl78dec)"
-    wanted_hotkey = HOTKEY_ONE
+    wanted_hotkey = HOTKEY_DECOMPILE
 
     def init(self):
         if not _is_rl78():
-            return ida_idaapi.PLUGIN_SKIP
-        ctx = ida_kernwin.add_hotkey(HOTKEY_ALL, _run_all)
-        if ctx is not None:
-            _hotkeys.append(ctx)
+            return ida_idaapi.PLUGIN_SKIP if ida_idaapi else 0
+
+        _register_actions()
+
+        for hk, fn in [(HOTKEY_DECOMPILE, _run_one),
+                       (HOTKEY_LEGACY, _run_one),
+                       (HOTKEY_ALL, _run_all)]:
+            ctx = ida_kernwin.add_hotkey(hk, fn)
+            if ctx is not None:
+                _hotkeys.append(ctx)
+
         print("rl78dec: loaded -- %s = this function, %s = decompile all"
-              % (HOTKEY_ONE, HOTKEY_ALL))
-        return ida_idaapi.PLUGIN_KEEP
+              % (HOTKEY_DECOMPILE, HOTKEY_ALL))
+        try:
+            from rl78dec import view
+            view.init_hooks()
+            view.check_and_restore_saved_view()
+        except Exception:
+            pass
+        return ida_idaapi.PLUGIN_KEEP if ida_idaapi else 0
 
     def run(self, arg):
         _run_one()
 
     def term(self):
+        _unregister_actions()
         for ctx in _hotkeys:
             try:
                 ida_kernwin.del_hotkey(ctx)

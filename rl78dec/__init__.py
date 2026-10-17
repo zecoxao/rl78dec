@@ -27,12 +27,14 @@ BANNER = [
 
 
 class Function:
-    def __init__(self, entry, name, func, tree, lines):
+    def __init__(self, entry, name, func, tree, lines, line_ea=None):
         self.entry = entry
         self.name = name
         self.cfg = func
+        self.func = func
         self.tree = tree
         self.lines = lines
+        self.line_ea = line_ea if line_ea is not None else []
 
 
 class Program:
@@ -62,8 +64,8 @@ def decompile_image(image, entries, base=0, cell_names=None, code_names=None):
         sig = abi.analyze_calling_convention(f, frame_info)
         vars.recover_variables(f, sig, frame_info)
         tree = structure.structure(f)
-        lines = cgen.generate(f, tree, namer, frame_info=frame_info, sig=sig)
-        out[entry] = Function(entry, namer.code(entry), f, tree, lines)
+        lines, line_ea = cgen.generate(f, tree, namer, frame_info=frame_info, sig=sig, with_ea=True)
+        out[entry] = Function(entry, namer.code(entry), f, tree, lines, line_ea=line_ea)
     return Program(image, insns, out, namer)
 
 

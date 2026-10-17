@@ -53,6 +53,8 @@ def _fold(e):
                 return ir.Const(v, w)
         if isinstance(r, ir.Const) and r.value == 0 and e.op in ("+", "-", "|", "^", "<<", ">>"):
             return l
+        if isinstance(l, ir.Const) and l.value == 0 and e.op in ("+", "|", "^"):
+            return r
         return ir.Bin(e.op, l, r)
     if isinstance(e, ir.Un):
         sub = _fold(e.e)
@@ -98,10 +100,25 @@ class Env:
         self.bank = bank              # active register bank (0..3 or None for unknown)
         self.atom_consts = {}         # atom (str) -> int (0..255)
         self.copies = {}              # reg_name (str) -> Expr
+        self.var_consts = {}          # var_name (str) -> int
+        self.var_copies = {}          # var_name (str) -> Expr
 
     def clear(self):
         self.atom_consts.clear()
         self.copies.clear()
+        self.var_copies.clear()
+
+    def set_var_const(self, name, val):
+        self.var_copies.pop(name, None)
+        self.var_consts[name] = val
+
+    def set_var_copy(self, name, expr):
+        self.var_consts.pop(name, None)
+        self.var_copies[name] = expr
+
+    def kill_var(self, name):
+        self.var_consts.pop(name, None)
+        self.var_copies.pop(name, None)
 
     def set_bank(self, bank):
         if self.bank != bank:
@@ -116,6 +133,10 @@ class Env:
                      _mentions_any_atom(v, regs.GPR_ATOMS)]
         for k in to_del:
             self.copies.pop(k, None)
+        to_del_vars = [k for k, v in self.var_copies.items()
+                       if _mentions_any_atom(v, regs.GPR_ATOMS)]
+        for k in to_del_vars:
+            self.var_copies.pop(k, None)
 
     def lookup_const(self, reg_name):
         if reg_name in regs.PAIRS:
@@ -137,6 +158,10 @@ class Env:
                      _mentions_any_atom(v, target_atoms)]
         for k in to_del:
             self.copies.pop(k, None)
+        to_del_vars = [k for k, v in self.var_copies.items()
+                       if _mentions_any_atom(v, target_atoms)]
+        for k in to_del_vars:
+            self.var_copies.pop(k, None)
 
     def set_const(self, reg_name, val):
         self.kill(reg_name)
@@ -182,9 +207,22 @@ def _subst(e, env):
         if cp is not None:
             return cp
         return e
-    if isinstance(e, ir.Var):
-        return env.copies.get(e.name, e)
+    if isinstance(e, (ir.Var, ir.StackVar)):
+        c = env.var_consts.get(e.name)
+        if c is not None:
+            return ir.Const(c, e.width)
+        cp = env.var_copies.get(e.name)
+        if cp is not None:
+            return cp
+        if isinstance(e, ir.Var):
+            return env.copies.get(e.name, e)
+        return e
     if isinstance(e, ir.Bin):
+        # pair >> 8 extracts the high byte atom of the register pair
+        if e.op == ">>" and isinstance(e.r, ir.Const) and e.r.value == 8:
+            if isinstance(e.l, ir.Reg) and e.l.name in regs.PAIRS:
+                hi_atom = regs.PAIRS[e.l.name][1]
+                return _subst(ir.Reg(hi_atom, "b"), env)
         return ir.Bin(e.op, _subst(e.l, env), _subst(e.r, env))
     if isinstance(e, ir.Un):
         return ir.Un(e.op, _subst(e.e, env))
@@ -355,9 +393,117 @@ def _coalesce_block(block):
     block.stmts = _coalesce_stmts(block.stmts)
 
 
-def _opt_block(block, default_bank=0):
+def _subst_reg(e, old_reg, new_reg):
+    if isinstance(e, ir.Reg):
+        if e.name == old_reg.name:
+            return ir.Reg(new_reg.name, width=e.width)
+        return e
+    if isinstance(e, ir.Bin):
+        return ir.Bin(e.op, _subst_reg(e.l, old_reg, new_reg), _subst_reg(e.r, old_reg, new_reg))
+    if isinstance(e, ir.Un):
+        return ir.Un(e.op, _subst_reg(e.e, old_reg, new_reg))
+    if isinstance(e, ir.IntrExpr):
+        return ir.IntrExpr(e.name, [_subst_reg(a, old_reg, new_reg) for a in e.args])
+    if isinstance(e, ir.Mem):
+        addr = _subst_reg(e.addr, old_reg, new_reg) if isinstance(e.addr, ir.Expr) else e.addr
+        return ir.Mem(addr, width=e.width, es=e.es, name=e.name)
+    if isinstance(e, ir.Bit):
+        return ir.Bit(_subst_reg(e.base, old_reg, new_reg), e.bit)
+    return e
+
+
+def _eliminate_swap_sandwiches(func):
+    """
+    Eliminate accumulator placeholder swap sequences:
+      XCH acc, other
+      <operations on acc>
+      XCH acc, other
+    Rewrites the middle operations to target 'other' directly and removes both XCH swaps.
+    """
+    for b in func.blocks.values():
+        stmts = b.stmts
+        i = 0
+        while i < len(stmts):
+            s1 = stmts[i]
+            if isinstance(s1, ir.Swap) and isinstance(s1.a, ir.Reg) and isinstance(s1.b, ir.Reg):
+                reg_a, reg_b = s1.a, s1.b
+                j = i + 1
+                match_j = None
+                while j < len(stmts):
+                    s2 = stmts[j]
+                    if isinstance(s2, ir.Swap) and isinstance(s2.a, ir.Reg) and isinstance(s2.b, ir.Reg):
+                        if {s2.a.name, s2.b.name} == {reg_a.name, reg_b.name}:
+                            match_j = j
+                            break
+                    if isinstance(s2, (ir.Call, ir.Branch, ir.Goto, ir.Ret)):
+                        break
+                    j += 1
+                if match_j is not None:
+                    middle = stmts[i + 1 : match_j]
+                    acc = reg_a if reg_a.name in ("a", "ax") else (reg_b if reg_b.name in ("a", "ax") else reg_a)
+                    other = reg_b if acc == reg_a else reg_a
+
+                    can_transform = True
+                    for m_s in middle:
+                        if isinstance(m_s, ir.Assign):
+                            if isinstance(m_s.dst, ir.Reg) and m_s.dst.name == other.name:
+                                can_transform = False
+                                break
+                        elif isinstance(m_s, ir.Compare):
+                            pass
+                        else:
+                            can_transform = False
+                            break
+
+                    if can_transform:
+                        new_middle = []
+                        for m_s in middle:
+                            if isinstance(m_s, ir.Assign):
+                                new_dst = _subst_reg(m_s.dst, acc, other)
+                                new_src = _subst_reg(m_s.src, acc, other)
+                                new_flag = None
+                                if m_s.flag:
+                                    fa = _subst_reg(m_s.flag.a, acc, other) if m_s.flag.a else None
+                                    fb = _subst_reg(m_s.flag.b, acc, other) if m_s.flag.b else None
+                                    new_flag = ir.FlagDef(m_s.flag.kind, a=fa, b=fb)
+                                new_middle.append(ir.Assign(m_s.ea, new_dst, new_src, flag=new_flag))
+                            elif isinstance(m_s, ir.Compare):
+                                fa = _subst_reg(m_s.flag.a, acc, other) if m_s.flag.a else None
+                                fb = _subst_reg(m_s.flag.b, acc, other) if m_s.flag.b else None
+                                new_middle.append(ir.Compare(m_s.ea, ir.FlagDef(m_s.flag.kind, a=fa, b=fb)))
+                        stmts = stmts[:i] + new_middle + stmts[match_j + 1:]
+                        b.stmts = stmts
+                        continue
+            i += 1
+
+
+def _lower_swaps(func):
+    """
+    Lower any remaining standalone ir.Swap(a, b) into value assignments via a temporary variable:
+      t = a
+      a = b
+      b = t
+    This enables regular SSA dataflow, copy propagation, and dead code elimination.
+    """
+    temp_counter = 0
+    for b in func.blocks.values():
+        new_stmts = []
+        for s in b.stmts:
+            if isinstance(s, ir.Swap):
+                w = getattr(s.a, "width", "b")
+                t_var = ir.Var(f"_swap_{temp_counter}", width=w)
+                temp_counter += 1
+                new_stmts.append(ir.Assign(s.ea, t_var, s.a))
+                new_stmts.append(ir.Assign(s.ea, s.a, s.b))
+                new_stmts.append(ir.Assign(s.ea, s.b, t_var))
+            else:
+                new_stmts.append(s)
+        b.stmts = new_stmts
+
+
+def _opt_block(block, default_bank=0, initial_env=None):
     _coalesce_block(block)
-    env = Env(bank=default_bank)
+    env = initial_env if initial_env is not None else Env(bank=default_bank)
     for s in block.stmts:
         if isinstance(s, ir.Assign):
             s.src = _fold(_subst(s.src, env))
@@ -391,10 +537,33 @@ def _opt_block(block, default_bank=0):
                     env.kill("psw")
                 elif isinstance(s.src, ir.Const):
                     env.set_const(s.dst.name, s.src.value)
-                elif isinstance(s.src, (ir.Reg, ir.Var)):
-                    env.set_copy(s.dst.name, s.src)
+                elif isinstance(s.src, ir.Reg) and env.lookup_const(s.src.name) is not None:
+                    env.set_const(s.dst.name, env.lookup_const(s.src.name).value)
+                elif isinstance(s.src, (ir.Reg, ir.Var, ir.StackVar)):
+                    if isinstance(s.src, (ir.Var, ir.StackVar)) and s.src.name in env.var_consts:
+                        env.set_const(s.dst.name, env.var_consts[s.src.name])
+                    else:
+                        env.set_copy(s.dst.name, s.src)
                 else:
                     env.kill(s.dst.name)
+            elif isinstance(s.dst, (ir.StackVar, ir.Var)):
+                if isinstance(s.src, ir.Const):
+                    env.set_var_const(s.dst.name, s.src.value)
+                elif isinstance(s.src, ir.Reg):
+                    c = env.lookup_const(s.src.name)
+                    if c is not None:
+                        env.set_var_const(s.dst.name, c.value)
+                    elif not s.dst.name.startswith("_s"):
+                        env.set_var_copy(s.dst.name, s.src)
+                    else:
+                        env.kill_var(s.dst.name)
+                elif isinstance(s.src, (ir.StackVar, ir.Var)):
+                    if s.src.name in env.var_consts:
+                        env.set_var_const(s.dst.name, env.var_consts[s.src.name])
+                    else:
+                        env.set_var_copy(s.dst.name, s.src)
+                else:
+                    env.kill_var(s.dst.name)
             elif isinstance(s.dst, ir.Bit):
                 if isinstance(s.dst.base, ir.Reg) and s.dst.base.name == "psw":
                     if s.dst.bit in (3, 5):
@@ -465,6 +634,48 @@ def _opt_block(block, default_bank=0):
 
 
 def optimize(func, default_bank=0):
-    for b in func.blocks.values():
+    import copy
+
+    # Phase 0: Eliminate accumulator placeholder swap sequences and lower remaining swaps
+    _eliminate_swap_sandwiches(func)
+    _lower_swaps(func)
+
+    # Pass 1: Intra-block local optimizations
+    for b in func.ordered():
         _opt_block(b, default_bank=default_bank)
+
+    # Collect single-assigned StackVar / Var constants across func
+    var_assigns = {}
+    for b in func.blocks.values():
+        for s in b.stmts:
+            if isinstance(s, ir.Assign) and isinstance(s.dst, (ir.StackVar, ir.Var)):
+                var_assigns.setdefault(s.dst.name, []).append(s.src)
+
+    func_consts = {}
+    for name, srcs in var_assigns.items():
+        if len(srcs) == 1 and isinstance(srcs[0], ir.Const):
+            func_consts[name] = srcs[0].value
+
+    # Build CFG predecessor mapping
+    preds = {}
+    for b_start, b in func.blocks.items():
+        for kind, succ_ea in b.succ:
+            preds.setdefault(succ_ea, []).append(b_start)
+
+    # Pass 2: Forward chaining across CFG along single-predecessor edges
+    out_envs = {}
+    for b in func.ordered():
+        p_list = preds.get(b.start, [])
+        if len(p_list) == 1 and p_list[0] in out_envs:
+            env = copy.deepcopy(out_envs[p_list[0]])
+        else:
+            env = Env(bank=default_bank)
+
+        for vname, val in func_consts.items():
+            if vname not in env.var_consts:
+                env.var_consts[vname] = val
+
+        _opt_block(b, default_bank=default_bank, initial_env=env)
+        out_envs[b.start] = env
+
     return func

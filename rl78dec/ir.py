@@ -22,7 +22,9 @@ class Const(Expr):
 
     def __init__(self, value, width="b"):
         self.width = width
-        if width == "a":                 # an address: keep 20 bits, never mask to 8
+        if width in ("d", "dw"):
+            self.value = value & 0xFFFFFFFF
+        elif width == "a":                 # an address: keep 20 bits, never mask to 8
             self.value = value & 0xFFFFF
         elif width == "w":
             self.value = value & 0xFFFF
@@ -41,7 +43,14 @@ class Reg(Expr):
 
     def __init__(self, name, width=None):
         self.name = name
-        self.width = width or ("w" if name in ("ax", "bc", "de", "hl", "sp") else "b")
+        if width is not None:
+            self.width = width
+        elif name in ("de:bc",):
+            self.width = "d"
+        elif name in ("ax", "bc", "de", "hl", "sp"):
+            self.width = "w"
+        else:
+            self.width = "b"
 
     def __eq__(self, o):
         return isinstance(o, Reg) and o.name == self.name

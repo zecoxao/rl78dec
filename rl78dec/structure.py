@@ -201,6 +201,7 @@ class _Structurer:
             if term == "switch":
                 node, nxt = self._emit_switch(b, lo, hi, loop)
                 if node is not None:
+                    node.ea = b.stmts[-1].ea if b.stmts else b.start
                     out.append(node)
                     if nxt is not None and nxt > i:
                         i = nxt
@@ -208,7 +209,9 @@ class _Structurer:
                         i += 1
                     continue
             if term == "ret":
-                out.append(SRet(self._ret_val(b)))
+                ret_node = SRet(self._ret_val(b))
+                ret_node.ea = b.stmts[-1].ea if b.stmts else b.start
+                out.append(ret_node)
                 i += 1
                 continue
 
@@ -221,8 +224,11 @@ class _Structurer:
                 cond = cond_expr(self._branch_of(b))
                 taken = b.succ[0][1]
                 fall = b.succ[1][1] if len(b.succ) > 1 else None
+                b_ea = b.stmts[-1].ea if b.stmts else b.start
                 if loop is not None and taken in (loop[0], loop[1]):
-                    out.append(SContinue(cond) if taken == loop[0] else SBreakIf(cond))
+                    c_node = SContinue(cond) if taken == loop[0] else SBreakIf(cond)
+                    c_node.ea = b_ea
+                    out.append(c_node)
                     self._fall_after(out, fall, lo, hi, loop, i)
                     i += 1
                     continue
@@ -230,10 +236,14 @@ class _Structurer:
                 if ti is not None and i + 1 <= ti < hi and taken != b.start \
                         and (loop is None or taken not in (loop[0], loop[1])):
                     then = self._emit(i + 1, ti, loop)
-                    out.append(SIf(negate(cond), then, None))
+                    if_node = SIf(negate(cond), then, None)
+                    if_node.ea = b_ea
+                    out.append(if_node)
                     i = ti
                     continue
-                out.append(SIfGoto(cond, taken))
+                if_goto = SIfGoto(cond, taken)
+                if_goto.insn_ea = b_ea
+                out.append(if_goto)
                 self._fall_after(out, fall, lo, hi, loop, i)
                 i += 1
                 continue
@@ -257,6 +267,7 @@ class _Structurer:
         body = self._emit(loop_lo, loop_hi, loop_ctx)
         self._open.discard(hidx)
         node = SWhile(body, cond=None, dowhile=False)
+        node.ea = header
         nxt = latch + 1
         if follow_ea is not None and self.idx.get(follow_ea) is not None:
             nxt = self.idx[follow_ea]

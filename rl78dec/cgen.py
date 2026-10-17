@@ -36,6 +36,9 @@ class _Emit:
         if isinstance(e, ir.Bit):
             return "((%s >> %d) & 1)" % (self.expr(e.base, False), e.bit)
         if isinstance(e, ir.Bin):
+            if e.op in (">>", "<<") and isinstance(e.r, ir.Const):
+                s = "%s %s %d" % (self.expr(e.l, False), e.op, e.r.value)
+                return s if top else "(%s)" % s
             s = "%s %s %s" % (self.expr(e.l, False), e.op, self.expr(e.r, False))
             return s if top else "(%s)" % s
         if isinstance(e, ir.Un):
@@ -43,6 +46,27 @@ class _Emit:
         if isinstance(e, ir.IntrExpr):
             if not e.args:
                 return e.name
+            if e.name == "mulu":
+                if len(e.args) == 2:
+                    return "(uint16_t)%s * %s" % (self.expr(e.args[0], False), self.expr(e.args[1], False))
+            elif e.name in ("sar", "sarw"):
+                if len(e.args) == 2:
+                    cast = "int16_t" if (e.name == "sarw" or getattr(e.args[0], "width", None) == "w") else "int8_t"
+                    return "((%s)%s >> %s)" % (cast, self.expr(e.args[0], False), self.expr(e.args[1], False))
+            elif e.name == "rol":
+                if len(e.args) == 1:
+                    a = self.expr(e.args[0], False)
+                    return "((%s << 1) | (%s >> 7))" % (a, a)
+            elif e.name == "ror":
+                if len(e.args) == 1:
+                    a = self.expr(e.args[0], False)
+                    return "((%s >> 1) | (%s << 7))" % (a, a)
+            elif e.name in ("rolc", "rolwc"):
+                if len(e.args) == 1:
+                    return "((%s << 1) | CY)" % self.expr(e.args[0], False)
+            elif e.name == "rorc":
+                if len(e.args) == 1:
+                    return "((%s >> 1) | (CY << 7))" % self.expr(e.args[0], False)
             return "%s(%s)" % (e.name, ", ".join(self.expr(a) for a in e.args))
         return "?"
 
@@ -94,6 +118,29 @@ class _Emit:
                 base_name = self.namer.cell(base_addr)
                 base_name = self.user_renames.get(base_name, base_name)
                 return "%s[-(%s)]" % (base_name, self.expr(addr.r))
+            base_cand = addr.l
+            if isinstance(base_cand, ir.Un) and base_cand.op in ("(uint16_t)", "(uint32_t)"):
+                base_cand = base_cand.e
+            if isinstance(base_cand, (ir.Var, ir.Reg, ir.StackVar)) and not isinstance(addr.r, (ir.Var, ir.Reg, ir.StackVar)):
+                if isinstance(addr.r, ir.Const) and addr.r.value == 1:
+                    return "*((uint8_t *)%s - 1)" % self.expr(base_cand) if e.width == "b" else "*(%s - 1)" % self.expr(base_cand)
+                return "%s[-(%s)]" % (self.expr(base_cand), self.expr(addr.r))
+
+        # Check if addr is an addition of a pointer/array base and an index
+        if isinstance(addr, ir.Bin) and addr.op == "+":
+            base_cand = addr.l
+            if isinstance(base_cand, ir.Un) and base_cand.op == "(uint16_t)":
+                base_cand = base_cand.e
+            if isinstance(base_cand, (ir.Var, ir.Reg, ir.StackVar)) and not isinstance(addr.r, (ir.Var, ir.Reg, ir.StackVar)):
+                return "%s[%s]" % (self.expr(base_cand), self.expr(addr.r))
+            elif isinstance(addr.r, (ir.Var, ir.Reg, ir.StackVar)) and not isinstance(addr.l, (ir.Var, ir.Reg, ir.StackVar)):
+                return "%s[%s]" % (self.expr(addr.r), self.expr(addr.l))
+
+        if isinstance(addr, (ir.Var, ir.Reg, ir.StackVar)):
+            ptr_name = self.expr(addr)
+            if e.width == "w":
+                return "*(uint16_t *)%s" % ptr_name
+            return "*%s" % ptr_name
 
         if isinstance(addr, ir.Expr):
             pre = "es_mem" if e.es else "mem"
@@ -130,6 +177,16 @@ class _Emit:
                 return "%s = %s;" % (self.expr(s.dst), call_str)
             return "%s;" % call_str
         if isinstance(s, ir.Intrinsic):
+            if s.name == "set_bit" and len(s.args) == 3:
+                tgt = self.expr(s.args[0])
+                bit_arg = s.args[1]
+                bit_val = bit_arg.value if isinstance(bit_arg, ir.Const) else (int(bit_arg) if isinstance(bit_arg, int) else None)
+                src = self.expr(s.args[2])
+                if bit_val is not None:
+                    mask = 1 << bit_val
+                    return "%s = (%s & ~0x%X) | (%s ? 0x%X : 0);" % (tgt, tgt, mask, src, mask)
+                else:
+                    return "%s = (%s & ~(1 << %s)) | ((%s != 0) << %s);" % (tgt, tgt, self.expr(bit_arg), src, self.expr(bit_arg))
             call = "%s(%s);" % (s.name, ", ".join(self.expr(a) for a in s.args))
             return call + ("   /* %s */" % s.note if s.note else "")
         return "/* %s */" % type(s).__name__
@@ -141,60 +198,68 @@ class _Emit:
         pad = "    " * ind
         for n in nodes:
             if isinstance(n, S.SLabel):
-                self._pending.append((ind, None, n.ea))
+                self._pending.append((ind, None, n.ea, n.ea))
             elif isinstance(n, S.SStmt):
                 if id(n.stmt) in self.hidden:
                     continue
-                self._pending.append((ind, pad + self.stmt(n.stmt), None))
+                self._pending.append((ind, pad + self.stmt(n.stmt), None, n.stmt.ea))
             elif isinstance(n, S.SRet):
+                ea = getattr(n, "ea", None)
                 if getattr(n, "val", None) is not None:
-                    self._pending.append((ind, pad + "return %s;" % self.expr(n.val), None))
+                    self._pending.append((ind, pad + "return %s;" % self.expr(n.val), None, ea))
                 else:
-                    self._pending.append((ind, pad + "return;", None))
+                    self._pending.append((ind, pad + "return;", None, ea))
 
             elif isinstance(n, S.SGoto):
+                ea = getattr(n, "ea", n.ea)
                 if n.ea in self.block_starts:
                     self.used_labels.add(n.ea)
-                    self._pending.append((ind, pad + "goto %s;" % self.namer.label(n.ea), None))
+                    self._pending.append((ind, pad + "goto %s;" % self.namer.label(n.ea), None, ea))
                 else:                       # out-of-function tail jump
-                    self._pending.append((ind, pad + "JUMPOUT(%s);" % self._ext(n.ea), None))
+                    self._pending.append((ind, pad + "JUMPOUT(%s);" % self._ext(n.ea), None, ea))
             elif isinstance(n, S.SIfGoto):
+                insn_ea = getattr(n, "insn_ea", None)
                 if n.ea in self.block_starts:
                     self.used_labels.add(n.ea)
                     tail = "goto %s;" % self.namer.label(n.ea)
                 else:
                     tail = "JUMPOUT(%s);" % self._ext(n.ea)
-                self._pending.append((ind, pad + "if (%s) %s" % (self.expr(n.cond), tail), None))
+                self._pending.append((ind, pad + "if (%s) %s" % (self.expr(n.cond), tail), None, insn_ea))
             elif isinstance(n, S.SBreak):
-                self._pending.append((ind, pad + "break;", None))
+                ea = getattr(n, "ea", None)
+                self._pending.append((ind, pad + "break;", None, ea))
             elif isinstance(n, S.SBreakIf):
-                self._pending.append((ind, pad + "if (%s) break;" % self.expr(n.cond), None))
+                ea = getattr(n, "ea", None)
+                self._pending.append((ind, pad + "if (%s) break;" % self.expr(n.cond), None, ea))
             elif isinstance(n, S.SContinue):
+                ea = getattr(n, "ea", None)
                 if n.cond is None:
-                    self._pending.append((ind, pad + "continue;", None))
+                    self._pending.append((ind, pad + "continue;", None, ea))
                 else:
-                    self._pending.append((ind, pad + "if (%s) continue;" % self.expr(n.cond), None))
+                    self._pending.append((ind, pad + "if (%s) continue;" % self.expr(n.cond), None, ea))
             elif isinstance(n, S.SIf):
-                self._pending.append((ind, pad + "if (%s) {" % self.expr(n.cond), None))
+                ea = getattr(n, "ea", None)
+                self._pending.append((ind, pad + "if (%s) {" % self.expr(n.cond), None, ea))
                 self.emit(n.then, ind + 1)
                 if n.els:
-                    self._pending.append((ind, pad + "} else {", None))
+                    self._pending.append((ind, pad + "} else {", None, ea))
                     self.emit(n.els, ind + 1)
-                self._pending.append((ind, pad + "}", None))
+                self._pending.append((ind, pad + "}", None, ea))
             elif isinstance(n, S.SSwitch):
-                self._pending.append((ind, pad + "switch (%s) {" % self.expr(n.expr), None))
+                ea = getattr(n, "ea", None)
+                self._pending.append((ind, pad + "switch (%s) {" % self.expr(n.expr), None, ea))
                 for vals, body in n.cases:
                     for v in sorted(vals):
-                        self._pending.append((ind, pad + "case %d:" % v, None))
+                        self._pending.append((ind, pad + "case %d:" % v, None, ea))
                     self.emit(body, ind + 1)
                     if not (body and isinstance(body[-1], (S.SRet, S.SGoto, S.SBreak))):
-                        self._pending.append((ind + 1, pad + "    break;", None))
+                        self._pending.append((ind + 1, pad + "    break;", None, ea))
                 if n.default:
-                    self._pending.append((ind, pad + "default:", None))
+                    self._pending.append((ind, pad + "default:", None, ea))
                     self.emit(n.default, ind + 1)
                     if not (n.default and isinstance(n.default[-1], (S.SRet, S.SGoto, S.SBreak))):
-                        self._pending.append((ind + 1, pad + "    break;", None))
-                self._pending.append((ind, pad + "}", None))
+                        self._pending.append((ind + 1, pad + "    break;", None, ea))
+                self._pending.append((ind, pad + "}", None, ea))
             elif isinstance(n, S.SWhile):
                 self._emit_while(n, ind)
 
@@ -202,34 +267,39 @@ class _Emit:
         pad = "    " * ind
         body = list(n.body)
         tail = None
+        ea = getattr(n, "ea", None)
         if body and isinstance(body[-1], S.SContinue) and body[-1].cond is not None:
             tail = body[-1].cond
             body = body[:-1]
         if tail is not None:
-            self._pending.append((ind, pad + "do {", None))
+            self._pending.append((ind, pad + "do {", None, ea))
             self.emit(body, ind + 1)
-            self._pending.append((ind, pad + "} while (%s);" % self.expr(tail), None))
+            self._pending.append((ind, pad + "} while (%s);" % self.expr(tail), None, ea))
         else:
-            self._pending.append((ind, pad + "while (1) {", None))
+            self._pending.append((ind, pad + "while (1) {", None, ea))
             self.emit(body, ind + 1)
-            self._pending.append((ind, pad + "}", None))
+            self._pending.append((ind, pad + "}", None, ea))
 
     def _ext(self, ea):
         n = self.namer.code_names.get(ea) if hasattr(self.namer, "code_names") else None
         return n or "0x%05X" % ea
 
     def flush(self):
-        out = []
-        for ind, text, label_ea in self._pending:
+        lines = []
+        line_eas = []
+        for ind, text, label_ea, ea in self._pending:
             if label_ea is not None:
                 if label_ea in self.used_labels:
-                    out.append("%s:" % self.namer.label(label_ea))
+                    lines.append("%s:" % self.namer.label(label_ea))
+                    line_eas.append(ea)
                 continue
-            out.append(text)
-        return out
+            lines.append(text)
+            line_eas.append(ea)
+        return lines, line_eas
 
 
-def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_renames=None, user_types=None):
+def generate(func, tree, namer, frame_info=None, sig=None, banner=None,
+             user_renames=None, user_types=None, user_comments=None, with_ea=False):
     hidden = frame_info.hidden_stmts if frame_info else frozenset()
     u_renames = dict(getattr(frame_info, "user_renames", {}) or {})
     if user_renames:
@@ -237,16 +307,25 @@ def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_ren
     u_types = dict(getattr(frame_info, "user_types", {}) or {})
     if user_types:
         u_types.update(user_types)
+    u_comments = user_comments or {}
 
     em = _Emit(namer, block_starts=frozenset(func.blocks), hidden=hidden, user_renames=u_renames)
     em.emit(tree, 1)
-    body = em.flush()
+    body, body_eas = em.flush()
     out = []
+    line_eas = []
+
+    def _add_line(text, ea=None):
+        out.append(text)
+        line_eas.append(ea)
+
     if banner:
-        out.extend(banner)
+        for b_ln in banner:
+            _add_line(b_ln, None)
+
+    fn_entry = func.entry
     if sig is not None:
-        # Render signature with applied parameter renames and type overrides
-        fn_name = namer.code(func.entry)
+        fn_name = namer.code(fn_entry)
         ret_t = u_types.get("__return__", sig.ret_type)
         if sig.params:
             param_parts = []
@@ -257,15 +336,17 @@ def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_ren
             pstr = ", ".join(param_parts)
         else:
             pstr = "void"
-        out.append(f"{ret_t} {fn_name}({pstr})")
+        _add_line(f"{ret_t} {fn_name}({pstr})", fn_entry)
     else:
-        out.append("void %s(void)" % namer.code(func.entry))
-    out.append("{")
+        _add_line("void %s(void)" % namer.code(fn_entry), fn_entry)
+
+    _add_line("{", fn_entry)
+
     decls = []
     if frame_info and frame_info.locals:
         for name, (var, width) in sorted(frame_info.locals.items(), key=lambda kv: kv[1][0].offset):
             eff_name = u_renames.get(name, name)
-            default_t = "uint16_t" if width == "w" else "uint8_t"
+            default_t = "uint32_t" if width == "d" else ("uint16_t" if width == "w" else "uint8_t")
             tstr = u_types.get(name, u_types.get(eff_name, default_t))
             decls.append("    %s %s;" % (tstr, eff_name))
     if frame_info and getattr(frame_info, "virtual_vars", None):
@@ -278,14 +359,25 @@ def generate(func, tree, namer, frame_info=None, sig=None, banner=None, user_ren
             if frame_info.locals and name in frame_info.locals:
                 continue
             eff_name = u_renames.get(name, name)
-            default_t = "uint16_t" if width == "w" else "uint8_t"
+            default_t = "uint32_t" if width == "d" else ("uint16_t" if width == "w" else "uint8_t")
             tstr = u_types.get(name, u_types.get(eff_name, default_t))
             decls.append("    %s %s;" % (tstr, eff_name))
-    if decls:
-        out.extend(decls)
-        if body:
-            out.append("")
-    out.extend(body)
-    out.append("}")
+
+    for d in decls:
+        _add_line(d, None)
+    if decls and body:
+        _add_line("", None)
+
+    for b_ln, b_ea in zip(body, body_eas):
+        if b_ea is not None:
+            comm = u_comments.get(b_ea) or u_comments.get(str(b_ea)) or u_comments.get(hex(b_ea))
+            if comm:
+                b_ln = f"{b_ln}  // {comm}"
+        _add_line(b_ln, b_ea)
+
+    _add_line("}", fn_entry)
+
+    if with_ea:
+        return out, line_eas
     return out
 

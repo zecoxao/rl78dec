@@ -8,7 +8,10 @@ a stubbed ``ida_lines``.
 
 import re
 
-import ida_lines
+try:
+    import ida_lines
+except ImportError:
+    ida_lines = None
 
 C_KEYWORDS = frozenset((
     "if", "else", "while", "do", "for", "return", "break", "continue",
@@ -45,7 +48,7 @@ def _tag(text, color):
 
 
 def colorize(line):
-    if not line:
+    if not line or ida_lines is None:
         return line
     stripped = line.lstrip()
     if stripped.startswith(("//", "/*", "*", "*/")):

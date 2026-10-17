@@ -236,10 +236,216 @@ def test_call_site_recovery_fallthrough_and_volatile():
     print("ok  test_call_site_recovery_fallthrough_and_volatile")
 
 
+def test_homed_register_arguments_and_stack_offset():
+    # Simulates:
+    # 0x8224: push hl
+    # 0x8225: push ax
+    # 0x8226: movw hl, sp
+    # 0x8229: movw ax, [hl]      <-- read homed a0
+    # 0x822a: addw ax, [hl+8]    <-- read stack arg_0 (disp=8, arg_base = 0 + 4 + 4 = 8)
+    # 0x8257: pop ax
+    # 0x8258: pop hl
+    # 0x8259: ret
+    f = cfg.Func(0x8224)
+    b = cfg.Block(0x8224)
+    b.stmts = [
+        ir.Intrinsic(0x8224, "push", [ir.Reg("hl")]),
+        ir.Intrinsic(0x8225, "push", [ir.Reg("ax")]),
+        ir.Assign(0x8226, ir.Reg("hl"), ir.Reg("sp")),
+        ir.Assign(0x8229, ir.Reg("ax"), ir.Mem(ir.Reg("hl"), width="w")),
+        ir.Assign(0x822A, ir.Reg("ax"), ir.Bin("+", ir.Reg("ax"), ir.Mem(ir.Bin("+", ir.Reg("hl"), ir.Const(8)), width="w"))),
+        ir.Intrinsic(0x8257, "pop", [ir.Reg("ax")]),
+        ir.Intrinsic(0x8258, "pop", [ir.Reg("hl")]),
+        ir.Ret(0x8259),
+    ]
+    f.blocks[0x8224] = b
+
+    fi = frame.analyze_frame(f)
+    assert "ax" in fi.homed_args
+    assert fi.homed_slot_to_arg.get(0) == "a0"
+    assert fi.arg_base == 8
+
+    # Statement 3 must have src resolved to StackVar a0
+    assert isinstance(b.stmts[3].src, ir.StackVar)
+    assert b.stmts[3].src.name == "a0"
+    assert b.stmts[3].src.is_arg is True
+
+    # Statement 4 must have [hl+8] resolved to StackVar arg_0
+    add_r = b.stmts[4].src.r
+    assert isinstance(add_r, ir.StackVar)
+    assert add_r.name == "arg_0"
+    assert add_r.is_arg is True
+
+    sig = abi.analyze_calling_convention(f, fi)
+    # Must have a0 in params, and arg_0 as stack parameter (no duplication of a0)
+    assert len(sig.params) == 2
+    assert sig.params[0].name == "a0" and sig.params[0].location == "ax"
+    assert sig.params[1].name == "arg_0" and sig.params[1].location == "stack"
+    print("ok  test_homed_register_arguments_and_stack_offset")
+
+
+def test_caller_consensus_parameter_inference():
+    f = cfg.Func(0x273D)
+    b = cfg.Block(0x273D)
+    b.stmts = [
+        ir.Assign(0x273D, ir.Reg("c"), ir.Const(8)),
+        ir.Ret(0x2740),
+    ]
+    f.blocks[0x273D] = b
+    fi = frame.analyze_frame(f)
+    consensus = {"has_ax": True}
+    sig = abi.analyze_calling_convention(f, fi, caller_consensus=consensus)
+    assert any(p.name == "a0" and p.location == "ax" for p in sig.params)
+    print("ok  test_caller_consensus_parameter_inference")
+
+
+def test_call_site_no_spurious_ax():
+    # Simulates sub_35DD: caller without AX calling functions that don't take AX
+    f = cfg.Func(0x35DD)
+    b = cfg.Block(0x35DD)
+    c1 = ir.Call(0x35DD, target=0x4B3B)
+    c2 = ir.Call(0x35E1, target=0x8290)
+    c3 = ir.Call(0x35E5, target=0x4D01)
+    ret = ir.Ret(0x35E9)
+    b.stmts = [c1, c2, c3, ret]
+    f.blocks[0x35DD] = b
+    fi = frame.analyze_frame(f)
+
+    sig = abi.analyze_calling_convention(f, fi)
+    assert len(sig.params) == 0
+    assert len(c1.args) == 0
+    assert len(c2.args) == 0
+    assert len(c3.args) == 0
+    print("ok  test_call_site_no_spurious_ax")
+
+
+def test_dword_return_inference():
+    # Test callee returning uint32_t in DE:BC (e.g. sub_4B76, sub_4BCE)
+    f = cfg.Func(0x4B76)
+    b = cfg.Block(0x4B76)
+    b.stmts = [
+        ir.Assign(0x4B88, ir.Reg("bc"), ir.Const(0xEAA4, width="w")),
+        ir.Assign(0x4B8B, ir.Reg("e"), ir.Const(0x0F, width="b")),
+        ir.Ret(0x4B8D),
+    ]
+    f.blocks[0x4B76] = b
+    fi = frame.analyze_frame(f)
+    sig = abi.analyze_calling_convention(f, fi)
+    assert sig.ret_type == "uint32_t"
+    assert isinstance(sig.ret_expr, ir.Const)
+    assert sig.ret_expr.value == 0x0FEAA4
+    assert sig.ret_expr.width in ("d", "dw")
+
+    # Test callee returning 0 in DE:BC (e.g. sub_4BCE)
+    f2 = cfg.Func(0x4BCE)
+    b2 = cfg.Block(0x4BCE)
+    b2.stmts = [
+        ir.Assign(0x4BCE, ir.Reg("bc"), ir.Const(0, width="w")),
+        ir.Assign(0x4BCF, ir.Reg("de"), ir.Const(0, width="w")),
+        ir.Ret(0x4BD2),
+    ]
+    f2.blocks[0x4BCE] = b2
+    fi2 = frame.analyze_frame(f2)
+    sig2 = abi.analyze_calling_convention(f2, fi2)
+    assert sig2.ret_type == "uint32_t"
+    assert isinstance(sig2.ret_expr, ir.Const)
+    assert sig2.ret_expr.value == 0
+    print("ok  test_dword_return_inference")
+
+
+def test_dword_call_site_recovery():
+    # Test caller following a call with reads to E and BC (e.g. sub_35FB calling sub_A5EC)
+    f = cfg.Func(0x35FB)
+    b = cfg.Block(0x35FB)
+    s_call = ir.Call(0x360B, target=0xA5EC)
+    s_mov_e = ir.Assign(0x360F, ir.Reg("a"), ir.Reg("e"))
+    s_save = ir.Assign(0x3610, ir.Mem(ir.Const(0xFFED5, width="a")), ir.Reg("a"))
+    s_add_bc = ir.Assign(0x3613, ir.Reg("bc"), ir.Bin("+", ir.Reg("bc"), ir.Const(0x16)))
+    s_ret = ir.Ret(0x3679)
+    b.stmts = [s_call, s_mov_e, s_save, s_add_bc, s_ret]
+    f.blocks[0x35FB] = b
+    fi = frame.analyze_frame(f)
+
+    abi.analyze_calling_convention(f, fi)
+    assert isinstance(s_call.dst, ir.Reg)
+    assert s_call.dst.name == "de:bc"
+    assert s_call.dst.width == "d"
+    print("ok  test_dword_call_site_recovery")
+
+
+def test_far_pointer_param_consolidation():
+    # Callee with far register pair (homed a0/a1) and far stack pair (address, segment)
+    f = cfg.Func(0x48F6)
+    b = cfg.Block(0x48F6)
+    b.stmts = [
+        ir.Assign(0x490D, ir.Reg("a"), ir.StackVar("segment", "b", 12, is_arg=True)),
+        ir.Assign(0x490F, ir.Mem(ir.Const(0xFFED5, width="a")), ir.Reg("a")),
+        ir.Assign(0x4911, ir.Reg("ax"), ir.StackVar("address", "w", 10, is_arg=True)),
+        ir.Assign(0x4918, ir.Reg("es"), ir.Mem(ir.Const(0xFFED5, width="a"))),
+        ir.Assign(0x491B, ir.Reg("a"), ir.Mem(ir.Reg("de"), width="b", es=True)),
+        ir.Ret(0x4946),
+    ]
+    f.blocks[0x48F6] = b
+    fi = frame.FrameInfo(f)
+    fi.homed_args = ["ax", "bc"]
+    fi.homed_slot_to_arg = {0: "a0", 2: "a1"}
+    fi.args["a0"] = (ir.StackVar("a0", "w", 0, is_arg=True), "w")
+    fi.args["a1"] = (ir.StackVar("a1", "b", 2, is_arg=True), "b")
+    fi.args["address"] = (ir.StackVar("address", "w", 10, is_arg=True), "w")
+    fi.args["segment"] = (ir.StackVar("segment", "b", 12, is_arg=True), "b")
+    fi.args["msg_length"] = (ir.StackVar("msg_length", "b", 14, is_arg=True), "b")
+
+    abi.register_callee_far_specs(0x48F6, has_far_reg=True, far_stack_indices={0})
+    sig = abi.analyze_calling_convention(f, fi)
+    assert len(sig.params) == 3
+    assert sig.params[0].name == "a0" and sig.params[0].type_str == "uint32_t"
+    assert sig.params[1].name == "address" and sig.params[1].type_str == "uint32_t"
+    assert sig.params[2].name == "msg_length" and sig.params[2].type_str == "uint8_t"
+    print("ok  test_far_pointer_param_consolidation")
+
+
+def test_far_pointer_call_site_consolidation():
+    # Caller calling trigget_TXD0_interrupt(0xDF22, 0xF, 0xDFA2, 0xF, 2)
+    f = cfg.Func(0x468C)
+    b = cfg.Block(0x468C)
+    b.stmts = [
+        ir.Intrinsic(0x46BD, "push", [ir.Const(2, width="w")]),
+        ir.Assign(0x46C1, ir.Reg("c"), ir.Const(0x0F, width="b")),
+        ir.Intrinsic(0x46C3, "push", [ir.Reg("bc")]),
+        ir.Intrinsic(0x46C4, "push", [ir.Const(0xDFA2, width="w")]),
+        ir.Assign(0x46C5, ir.Reg("ax"), ir.Const(0xDF22, width="w")),
+        ir.Assign(0x46C8, ir.Reg("c"), ir.Const(0x0F, width="b")),
+        ir.Assign(0x46CA, ir.Reg("b"), ir.Const(0, width="b")),
+        ir.Call(0x46CB, target=0x48F6),
+        ir.Assign(0x46CF, ir.Reg("sp"), ir.Bin("+", ir.Reg("sp"), ir.Const(6))),
+        ir.Ret(0x46D5),
+    ]
+    f.blocks[0x468C] = b
+    fi = frame.analyze_frame(f)
+
+    abi.register_callee_far_specs(0x48F6, has_far_reg=True, far_stack_indices={0})
+    abi.analyze_calling_convention(f, fi)
+
+    s_call = b.stmts[7]
+    assert isinstance(s_call, ir.Call)
+    assert len(s_call.args) == 3
+    assert isinstance(s_call.args[0], ir.Const) and s_call.args[0].value == 0xFDF22
+    assert isinstance(s_call.args[1], ir.Const) and s_call.args[1].value == 0xFDFA2
+    assert isinstance(s_call.args[2], ir.Const) and s_call.args[2].value == 2
+    print("ok  test_far_pointer_call_site_consolidation")
+
+
 if __name__ == "__main__":
     test_param_inference_registers()
     test_param_inference_stack()
     test_return_inference()
     test_call_site_recovery()
     test_call_site_recovery_fallthrough_and_volatile()
+    test_homed_register_arguments_and_stack_offset()
+    test_caller_consensus_parameter_inference()
+    test_call_site_no_spurious_ax()
+    test_dword_return_inference()
+    test_dword_call_site_recovery()
+    test_far_pointer_param_consolidation()
+    test_far_pointer_call_site_consolidation()
     print("\nall abi tests passed")

@@ -47,9 +47,16 @@ def test_db_in_memory_persistence():
     db.set_sync_enabled(True)
     assert db.get_sync_enabled() is True
 
-    # 5. Clear
+    # 5. Comments
+    db.set_line_comment(func_ea, 0x221D, "entry check")
+    db.set_line_comment(func_ea, "line_5", "loop starts here")
+    assert db.get_line_comments(func_ea) == {"8733": "entry check", "line_5": "loop starts here"}
+    db.set_line_comment(func_ea, 0x221D, "")
+    assert db.get_line_comments(func_ea) == {"line_5": "loop starts here"}
+
+    # 6. Clear
     db.clear_func_data(func_ea)
-    assert db.get_func_data(func_ea) == {"renames": {}, "types": {}, "proto": None}
+    assert db.get_func_data(func_ea) == {"renames": {}, "types": {}, "proto": None, "comments": {}}
 
     print("ok  test_db_in_memory_persistence")
 
@@ -88,13 +95,22 @@ def test_db_cgen_integration():
         def label(self, ea): return f"loc_{ea:04X}"
         def cell(self, addr): return f"mem[{addr:X}]"
 
-    lines = cgen.generate(f, tree, DummyNamer(), frame_info=fi, sig=sig,
-                          user_renames=u_renames, user_types=u_types)
+    db.set_line_comment(func_ea, func_ea, "initialize to 10")
+    db_data = db.get_func_data(func_ea)
+    u_comments = db_data.get("comments", {})
+
+    lines, line_eas = cgen.generate(f, tree, DummyNamer(), frame_info=fi, sig=sig,
+                                    user_renames=u_renames, user_types=u_types,
+                                    user_comments=u_comments, with_ea=True)
     code = "\n".join(lines)
 
     assert "int16_t counter;" in code
-    assert "counter = 0xA;" in code
+    assert "counter = 0xA;  // initialize to 10" in code
     assert "return counter;" in code
+    assert len(lines) == len(line_eas)
+    # verify line_eas maps counter = 0xA to func_ea
+    assign_line_idx = [i for i, ln in enumerate(lines) if "counter = 0xA" in ln][0]
+    assert line_eas[assign_line_idx] == func_ea
 
     print("ok  test_db_cgen_integration")
 
