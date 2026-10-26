@@ -239,6 +239,50 @@ def test_struct_pointer_cascading():
     print("ok  test_struct_pointer_cascading")
 
 
+def test_math_simplification():
+    from rl78dec import ir, opt, cgen
+    from rl78dec.names import Namer
+
+    v12 = ir.Var("v12")
+    tbl = ir.Const(0x30BE, name="cp_cmd_table")
+
+    # ((v12 + v12) + v12) + cp_cmd_table -> v12 * 3 + cp_cmd_table
+    e1 = ir.Bin("+", ir.Bin("+", ir.Bin("+", v12, v12), v12), tbl)
+    sim1 = opt.simplify_math(e1)
+    em = cgen._Emit(Namer())
+    out1 = em.expr(sim1)
+    assert out1 == "v12 * 3 + cp_cmd_table", out1
+
+    # (v6 + v6) + v6 -> v6 * 3
+    v6 = ir.Var("v6")
+    e2 = ir.Bin("+", ir.Bin("+", v6, v6), v6)
+    sim2 = opt.simplify_math(e2)
+    assert em.expr(sim2) == "v6 * 3", em.expr(sim2)
+
+    # x + x -> x * 2
+    x = ir.Var("x")
+    e3 = ir.Bin("+", x, x)
+    assert em.expr(opt.simplify_math(e3)) == "x * 2"
+
+    # (x * 2) + (x * 3) -> x * 5
+    e4 = ir.Bin("+", ir.Bin("*", x, ir.Const(2)), ir.Bin("*", x, ir.Const(3)))
+    assert em.expr(opt.simplify_math(e4)) == "x * 5"
+
+    # (x + 5) + 3 -> x + 8
+    e5 = ir.Bin("+", ir.Bin("+", x, ir.Const(5)), ir.Const(3))
+    assert em.expr(opt.simplify_math(e5)) == "x + 8"
+
+    # (x + 5) - 5 -> x
+    e6 = ir.Bin("-", ir.Bin("+", x, ir.Const(5)), ir.Const(5))
+    assert em.expr(opt.simplify_math(e6)) == "x"
+
+    # x - x -> 0
+    e7 = ir.Bin("-", x, x)
+    assert em.expr(opt.simplify_math(e7)) == "0"
+
+    print("ok  test_math_simplification")
+
+
 if __name__ == "__main__":
     test_decode_fields()
     test_all_first_bytes()
@@ -248,4 +292,5 @@ if __name__ == "__main__":
     test_global_memory_access()
     test_named_variable_constant()
     test_struct_pointer_cascading()
+    test_math_simplification()
     print("\nall tests passed")

@@ -8,8 +8,22 @@ cells shown by name.  Relational conditions come from the flag provenance in
 could not be recovered.
 """
 
-from . import ir, sfr
+from . import ir, sfr, opt
 from . import structure as S
+
+
+_PRECEDENCE = {
+    "*": 10, "/": 10, "%": 10,
+    "+": 9, "-": 9,
+    "<<": 8, ">>": 8,
+    "<": 7, "<=": 7, ">": 7, ">=": 7,
+    "==": 6, "!=": 6,
+    "&": 5,
+    "^": 4,
+    "|": 3,
+    "&&": 2,
+    "||": 1,
+}
 
 
 def _find_struct_member(struct_def, offset):
@@ -107,7 +121,7 @@ class _Emit:
 
     # -- expressions --------------------------------------------------------
 
-    def expr(self, e, top=True):
+    def expr(self, e, top=True, parent_op=None, is_right=False):
         if isinstance(e, ir.Const):
             if getattr(e, "name", None):
                 return self.user_renames.get(e.name, e.name)
@@ -129,8 +143,20 @@ class _Emit:
         if isinstance(e, ir.Bit):
             return "((%s >> %d) & 1)" % (self.expr(e.base, False), e.bit)
         if isinstance(e, ir.Bin):
-            s = "%s %s %s" % (self.expr(e.l, False), e.op, self.expr(e.r, False))
-            return s if top else "(%s)" % s
+            e = opt.simplify_math(e)
+            my_prec = _PRECEDENCE.get(e.op, 0)
+            l_str = self.expr(e.l, False, e.op, False)
+            r_str = self.expr(e.r, False, e.op, True)
+            s = "%s %s %s" % (l_str, e.op, r_str)
+            if parent_op is not None:
+                p_prec = _PRECEDENCE.get(parent_op, 0)
+                if parent_op in ("<<", ">>", "&", "|", "^") and e.op in ("+", "-", "*", "/", "%"):
+                    return "(%s)" % s
+                if my_prec < p_prec:
+                    return "(%s)" % s
+                if my_prec == p_prec and is_right and parent_op in ("-", "/", "%"):
+                    return "(%s)" % s
+            return s
         if isinstance(e, ir.Un):
             return "%s%s" % (e.op, self.expr(e.e, False))
         if isinstance(e, ir.IntrExpr):
@@ -157,6 +183,8 @@ class _Emit:
     def _struct_deref(self, addr):
         if not self.var_structs or not getattr(self.namer, "struct_defs", None):
             return None
+        if isinstance(addr, ir.Bin):
+            addr = opt.simplify_math(addr)
         base_var, offset = _extract_base_and_offset(addr)
         if base_var and offset is not None:
             st_name = self.var_structs.get(base_var.name)
@@ -176,7 +204,7 @@ class _Emit:
         if sd:
             return sd
 
-        addr = e.addr
+        addr = opt.simplify_math(e.addr) if isinstance(e.addr, ir.Bin) else e.addr
         if isinstance(addr, ir.Const):
             addr = addr.value
 

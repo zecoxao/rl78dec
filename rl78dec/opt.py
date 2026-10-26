@@ -29,6 +29,7 @@ from . import ir, regs
 _OPS = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
     "|": lambda a, b: a | b,
     "&": lambda a, b: a & b,
     "^": lambda a, b: a ^ b,
@@ -43,6 +44,110 @@ _LVAL_ARGS = {
 }
 
 
+def simplify_math(e):
+    if not isinstance(e, ir.Bin):
+        return e
+
+    l = simplify_math(e.l) if isinstance(e.l, ir.Bin) else e.l
+    r = simplify_math(e.r) if isinstance(e.r, ir.Bin) else e.r
+    e = ir.Bin(e.op, l, r)
+
+    if e.op not in ("+", "-"):
+        return e
+
+    terms = {}        # base_expr -> net_coefficient (int)
+    named_consts = {} # Const -> coeff
+    const_val = 0
+    const_width = "b"
+
+    def collect(node, mult):
+        nonlocal const_val, const_width
+        if isinstance(node, ir.Bin):
+            if node.op == "+":
+                collect(node.l, mult)
+                collect(node.r, mult)
+                return
+            elif node.op == "-":
+                collect(node.l, mult)
+                collect(node.r, -mult)
+                return
+            elif node.op == "*":
+                if isinstance(node.r, ir.Const) and getattr(node.r, "name", None) is None:
+                    collect(node.l, mult * node.r.value)
+                    return
+                elif isinstance(node.l, ir.Const) and getattr(node.l, "name", None) is None:
+                    collect(node.r, mult * node.l.value)
+                    return
+        elif isinstance(node, ir.Const):
+            if getattr(node, "name", None):
+                named_consts[node] = named_consts.get(node, 0) + mult
+                return
+            else:
+                const_val += mult * node.value
+                if node.width == "a" or abs(const_val) > 0xFFFF:
+                    const_width = "a"
+                elif node.width == "w" and const_width != "a":
+                    const_width = "w"
+                elif abs(const_val) > 0xFF and const_width == "b":
+                    const_width = "w"
+                return
+        elif isinstance(node, ir.Un) and node.op == "-":
+            collect(node.e, -mult)
+            return
+
+        terms[node] = terms.get(node, 0) + mult
+
+    collect(e, 1)
+
+    parts = []
+    # 1. Variables and general terms
+    for term, coeff in terms.items():
+        if coeff == 0:
+            continue
+        if coeff == 1:
+            parts.append((term, 1))
+        elif coeff > 1:
+            width = getattr(term, "width", "w")
+            parts.append((ir.Bin("*", term, ir.Const(coeff, width)), 1))
+        else:
+            width = getattr(term, "width", "w")
+            parts.append((ir.Bin("*", term, ir.Const(-coeff, width)), -1))
+
+    # 2. Named constants
+    for nconst, coeff in named_consts.items():
+        if coeff == 0:
+            continue
+        if coeff == 1:
+            parts.append((nconst, 1))
+        elif coeff > 1:
+            parts.append((ir.Bin("*", nconst, ir.Const(coeff, nconst.width)), 1))
+        else:
+            parts.append((ir.Bin("*", nconst, ir.Const(-coeff, nconst.width)), -1))
+
+    # 3. Numeric constant
+    if const_val != 0:
+        if abs(const_val) > 0xFFFF:
+            const_width = "a"
+        elif abs(const_val) > 0xFF and const_width == "b":
+            const_width = "w"
+        if const_val > 0:
+            parts.append((ir.Const(const_val, const_width), 1))
+        else:
+            parts.append((ir.Const(-const_val, const_width), -1))
+
+    if not parts:
+        return ir.Const(0)
+
+    first_term, first_sign = parts[0]
+    res = first_term if first_sign > 0 else ir.Un("-", first_term)
+    for p, sign in parts[1:]:
+        if sign > 0:
+            res = ir.Bin("+", res, p)
+        else:
+            res = ir.Bin("-", res, p)
+    return res
+
+
 def _fold(e):
     if isinstance(e, ir.Bin):
         l, r = _fold(e.l), _fold(e.r)
@@ -53,6 +158,18 @@ def _fold(e):
                 return ir.Const(v, w)
         if isinstance(r, ir.Const) and r.value == 0 and e.op in ("+", "-", "|", "^", "<<", ">>"):
             return l
+        if isinstance(l, ir.Const) and l.value == 0 and e.op in ("+", "|", "^"):
+            return r
+        if isinstance(r, ir.Const) and r.value == 1 and e.op == "*":
+            return l
+        if isinstance(l, ir.Const) and l.value == 1 and e.op == "*":
+            return r
+        if (isinstance(r, ir.Const) and r.value == 0 and e.op == "*") or (isinstance(l, ir.Const) and l.value == 0 and e.op == "*"):
+            return ir.Const(0)
+
+        if e.op in ("+", "-"):
+            return simplify_math(ir.Bin(e.op, l, r))
+
         return ir.Bin(e.op, l, r)
     if isinstance(e, ir.Un):
         sub = _fold(e.e)
