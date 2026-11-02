@@ -11,7 +11,7 @@ def _stub():
     il = types.ModuleType("ida_lines")
     il.COLSTR = lambda t, c: "<%s>%s</%s>" % (c, t, c)
     for name in ("AUTOCMT", "STRING", "NUMBER", "KEYWORD", "TYPE",
-                 "CREFTAIL", "CNAME", "REG", "SYMBOL"):
+                 "CREFTAIL", "CNAME", "REG", "SYMBOL", "EXTRA"):
         setattr(il, "SCOLOR_" + name, name.lower())
     sys.modules["ida_lines"] = il
 
@@ -28,6 +28,10 @@ def test_highlight():
     assert H.colorize("loc_10:").startswith("<creftail>")
     assert H.colorize(" * banner").startswith("<autocmt>")
     assert len(H.colorize_all(["void f(void)", "{", "}"])) == 3
+
+    # Token occurrence highlighting
+    hl = H.colorize("    ax = ax + 1;", highlight_ident="ax")
+    assert "<extra>ax</extra>" in hl
     print("ok  test_highlight")
 
 
