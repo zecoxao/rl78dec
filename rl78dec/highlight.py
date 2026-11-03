@@ -47,17 +47,28 @@ def _tag(text, color):
     return ida_lines.COLSTR(text, color)
 
 
+<<<<<<< HEAD
 def colorize(line):
     if not line or ida_lines is None:
+=======
+def colorize(line, highlight_ident=None):
+    """Return ``line`` with IDA colour tags around each token.
+    
+    If ``highlight_ident`` is specified, occurrences of that identifier
+    are given an accent highlight tag (SCOLOR_EXTRA) to emphasize matching tokens.
+    """
+    if not line:
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         return line
     stripped = line.lstrip()
-    if stripped.startswith(("//", "/*", "*", "*/")):
+    if stripped.startswith(("//", "/*", "*", "*/")) and not highlight_ident:
         return _tag(line, ida_lines.SCOLOR_AUTOCMT)
-    if _LABEL.match(stripped):
+    if _LABEL.match(stripped) and not highlight_ident:
         return _tag(line, ida_lines.SCOLOR_CREFTAIL)
 
     out = []
     pos, n = 0, len(line)
+    extra_col = getattr(ida_lines, "SCOLOR_EXTRA", getattr(ida_lines, "SCOLOR_ERROR", "\x01\x32"))
     while pos < n:
         m = _TOK.match(line, pos)
         if m is None:
@@ -73,7 +84,10 @@ def colorize(line):
         elif kind in ("hex", "num"):
             out.append(_tag(text, ida_lines.SCOLOR_NUMBER))
         elif kind == "ident":
-            out.append(_tag(text, _ident_color(text, line, pos)))
+            if highlight_ident and text == highlight_ident:
+                out.append(_tag(text, extra_col))
+            else:
+                out.append(_tag(text, _ident_color(text, line, pos)))
         else:
             out.append(_tag(text, ida_lines.SCOLOR_SYMBOL))
     return "".join(out)

@@ -13,32 +13,33 @@ from . import ir
 def op_expr(op):
     """Convert a decoder Operand into an IR expression."""
     m = op.mode
+    name = getattr(op, "name", None)
     if m == "reg":
         return ir.Reg(op.reg)
     if m == "imm":
-        return ir.Const(op.value, op.width)
+        return ir.Const(op.value, op.width, name=name)
     if m == "mem":
-        return ir.Mem(op.addr, op.width, op.es)
+        return ir.Mem(op.addr, op.width, op.es, name=name)
     if m == "ind":
         base = ir.Reg(op.base_reg)
         addr = base if op.disp == 0 else ir.Bin("+", base, ir.Const(op.disp, "b"))
-        return ir.Mem(addr, op.width, op.es)
+        return ir.Mem(addr, op.width, op.es, name=name)
     if m == "idx16":
         disp = (0xF0000 | (op.disp & 0xFFFF)) if not op.es else op.disp
-        addr = ir.Bin("+", ir.Const(disp, "a"), ir.Reg(op.base_reg))
+        addr = ir.Bin("+", ir.Const(disp, "a", name=name), ir.Reg(op.base_reg))
         return ir.Mem(addr, op.width, op.es)
     if m == "hloff":
-        return ir.Mem(ir.Bin("+", ir.Reg("hl"), ir.Reg(op.base_reg)), "b", op.es)
+        return ir.Mem(ir.Bin("+", ir.Reg("hl"), ir.Reg(op.base_reg)), "b", op.es, name=name)
     if m == "bit":
         if op.base == "reg":
             base = ir.Reg(op.reg)
         elif op.base == "ind":
             base = ir.Mem(ir.Reg(op.base_reg), "b", op.es)
         else:
-            base = ir.Mem(op.addr, "b", op.es)
+            base = ir.Mem(op.addr, "b", op.es, name=name)
         return ir.Bit(base, op.bit)
     if m in ("near", "far", "callt"):
-        return ir.Const(op.addr, "a")
+        return ir.Const(op.addr, "a", name=name)
     return ir.Const(0)
 
 

@@ -20,7 +20,10 @@ except ImportError:
 NODE_NAME = "$ rl78dec"
 _MEM_STORAGE = {}
 _MEM_SYNC = True
+<<<<<<< HEAD
 _WINDOW_STATE = {"is_open": False, "func_ea": None, "lineno": 0, "col": 0, "mode": "c"}
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 
 def _get_node():
@@ -38,6 +41,7 @@ def get_func_data(func_ea):
     """Retrieve persistent renames, types, and prototype for a function."""
     node = _get_node()
     if node is None:
+<<<<<<< HEAD
         d = _MEM_STORAGE.get(func_ea)
         if d is None:
             return {"renames": {}, "types": {}, "proto": None, "comments": {}}
@@ -52,6 +56,16 @@ def get_func_data(func_ea):
     except Exception:
         pass
     return {"renames": {}, "types": {}, "proto": None, "comments": {}}
+=======
+        return _MEM_STORAGE.get(func_ea, {"renames": {}, "types": {}, "proto": None})
+    try:
+        val = node.supstr(func_ea)
+        if val:
+            return json.loads(val)
+    except Exception:
+        pass
+    return {"renames": {}, "types": {}, "proto": None}
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 
 def set_func_data(func_ea, data):
@@ -153,6 +167,7 @@ def clear_func_data(func_ea):
         pass
 
 
+<<<<<<< HEAD
 def set_line_comment(func_ea, line_key, comment):
     """Save or remove a line-level user comment."""
     data = get_func_data(func_ea)
@@ -175,6 +190,97 @@ def save_window_state(is_open, func_ea, lineno=0, col=0, mode="c"):
     """Persist open/closed status, current function EA, cursor, and view mode."""
     global _WINDOW_STATE
     _WINDOW_STATE = {
+=======
+def set_var_locator(func_ea, locator, name=None, type_str=None, flags=0):
+    """Save user modifications keyed by robust definition-site locator."""
+    data = get_func_data(func_ea)
+    lvars = data.setdefault("lvars", {})
+    if not name and not type_str and not flags:
+        lvars.pop(locator, None)
+    else:
+        entry = lvars.setdefault(locator, {})
+        if name is not None:
+            entry["name"] = name
+        if type_str is not None:
+            entry["type"] = type_str.strip()
+        if flags:
+            entry["flags"] = flags
+    set_func_data(func_ea, data)
+
+
+def get_var_locator(func_ea, locator):
+    """Retrieve saved info for a locator."""
+    data = get_func_data(func_ea)
+    return data.get("lvars", {}).get(locator)
+
+
+def set_statement_cmt(func_ea, stmt_ea, cmt_str):
+    """Save a statement comment attached to instruction linear address."""
+    data = get_func_data(func_ea)
+    cmts = data.setdefault("cmts", {})
+    ea_key = hex(stmt_ea) if isinstance(stmt_ea, int) else str(stmt_ea)
+    if not cmt_str:
+        cmts.pop(ea_key, None)
+    else:
+        cmts[ea_key] = cmt_str.strip()
+    set_func_data(func_ea, data)
+
+
+def get_statement_cmt(func_ea, stmt_ea):
+    """Retrieve saved comment for a statement."""
+    data = get_func_data(func_ea)
+    ea_key = hex(stmt_ea) if isinstance(stmt_ea, int) else str(stmt_ea)
+    return data.get("cmts", {}).get(ea_key)
+
+
+def set_numform(func_ea, stmt_ea, op_idx, form_str):
+    """Save immediate constant display format ('hex', 'dec', 'char')."""
+    data = get_func_data(func_ea)
+    numforms = data.setdefault("numforms", {})
+    key = f"{hex(stmt_ea) if isinstance(stmt_ea, int) else str(stmt_ea)}:{op_idx}"
+    if not form_str or form_str == "default":
+        numforms.pop(key, None)
+    else:
+        numforms[key] = form_str.lower()
+    set_func_data(func_ea, data)
+
+
+def get_numform(func_ea, stmt_ea, op_idx=0):
+    """Retrieve saved format for an immediate constant."""
+    data = get_func_data(func_ea)
+    key = f"{hex(stmt_ea) if isinstance(stmt_ea, int) else str(stmt_ea)}:{op_idx}"
+    return data.get("numforms", {}).get(key)
+
+
+def toggle_iflag(func_ea, branch_ea):
+    """Toggle inverted condition flag for an if statement."""
+    data = get_func_data(func_ea)
+    iflags = data.setdefault("iflags", [])
+    ea_val = branch_ea if isinstance(branch_ea, int) else int(branch_ea, 16)
+    if ea_val in iflags:
+        iflags.remove(ea_val)
+        inverted = False
+    else:
+        iflags.append(ea_val)
+        inverted = True
+    set_func_data(func_ea, data)
+    return inverted
+
+
+def is_iflag_inverted(func_ea, branch_ea):
+    """Check if if-condition at branch_ea is marked inverted."""
+    data = get_func_data(func_ea)
+    ea_val = branch_ea if isinstance(branch_ea, int) else int(branch_ea, 16)
+    return ea_val in data.get("iflags", [])
+
+
+WIN_STATE_KEY = 0x7FFFFFFF
+_MEM_WIN_STATE = {}
+
+def save_window_state(is_open, func_ea, lineno=0, col=0, mode="c"):
+    """Persist decompiler window state (open status, function, caret, mode) to netnode."""
+    state = {
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         "is_open": bool(is_open),
         "func_ea": func_ea,
         "lineno": lineno,
@@ -184,6 +290,7 @@ def save_window_state(is_open, func_ea, lineno=0, col=0, mode="c"):
     node = _get_node()
     if node is not None:
         try:
+<<<<<<< HEAD
             node.supset(0x7FFFFFFF, json.dumps(_WINDOW_STATE))
         except Exception:
             pass
@@ -200,3 +307,23 @@ def load_window_state():
         except Exception:
             pass
     return dict(_WINDOW_STATE)
+=======
+            node.setblob(json.dumps(state).encode("utf-8"), WIN_STATE_KEY, "S")
+        except Exception:
+            pass
+    _MEM_WIN_STATE.clear()
+    _MEM_WIN_STATE.update(state)
+
+
+def load_window_state():
+    """Retrieve saved decompiler window state from netnode."""
+    node = _get_node()
+    if node is not None:
+        try:
+            raw = node.getblob(WIN_STATE_KEY, "S")
+            if raw:
+                return json.loads(raw.decode("utf-8"))
+        except Exception:
+            pass
+    return dict(_MEM_WIN_STATE)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da

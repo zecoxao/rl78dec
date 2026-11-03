@@ -48,8 +48,11 @@ GPR_END = 0xFFF00
 
 def atoms(name):
     """Byte atoms of register *name*, low byte first for pairs."""
+<<<<<<< HEAD
     if name == "de:bc":
         return ("c", "b", "e", "d")
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     if name in PAIRS:
         return PAIRS[name]
     return _COMPOSITE.get(name, (name,))
@@ -89,8 +92,11 @@ def pair_of(atom):
 
 
 def width(name):
+<<<<<<< HEAD
     if name == "de:bc":
         return "d"
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     return "w" if name in PAIRS else "b"
 
 

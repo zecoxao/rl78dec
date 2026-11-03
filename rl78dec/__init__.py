@@ -27,14 +27,22 @@ BANNER = [
 
 
 class Function:
+<<<<<<< HEAD
     def __init__(self, entry, name, func, tree, lines, line_ea=None):
+=======
+    def __init__(self, entry, name, func, tree, lines, line_eas=None):
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         self.entry = entry
         self.name = name
         self.cfg = func
         self.func = func
         self.tree = tree
         self.lines = lines
+<<<<<<< HEAD
         self.line_ea = line_ea if line_ea is not None else []
+=======
+        self.line_eas = line_eas if line_eas is not None else getattr(lines, "line_eas", None)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 
 class Program:

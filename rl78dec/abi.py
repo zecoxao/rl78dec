@@ -46,6 +46,7 @@ class FunctionSig:
         return f"{self.ret_type} {name}({pstr})"
 
 
+<<<<<<< HEAD
 _callee_preserves_cache = {}
 
 
@@ -307,6 +308,8 @@ def _consolidate_pair(a_off, a_seg):
     return ir.Bin("|", ir.Bin("<<", a_seg, ir.Const(16, width="b")), a_off)
 
 
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 def _compute_liveness(func, hidden_stmts):
     """Compute entry live-in atoms via standard backwards dataflow analysis."""
     block_gen = {}
@@ -348,6 +351,7 @@ def _compute_liveness(func, hidden_stmts):
                 collect_uses(s.a)
                 collect_uses(s.b)
             elif isinstance(s, ir.Call):
+<<<<<<< HEAD
                 # A call clobbers volatile registers AX and BC unless preserved by callee
                 preserved = get_callee_preserved_regs(s.target)
                 killed_regs = []
@@ -356,6 +360,10 @@ def _compute_liveness(func, hidden_stmts):
                 if "bc" not in preserved:
                     killed_regs.extend(regs.atoms("bc"))
                 for a in killed_regs:
+=======
+                # A call clobbers volatile registers AX and BC
+                for a in regs.atoms("ax") + regs.atoms("bc"):
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                     kill.add(a)
             elif isinstance(s, ir.Intrinsic):
                 if s.name != "pop":
@@ -420,12 +428,16 @@ def _infer_return(func, hidden_stmts):
             cand_type = "void"
             cand_reg = None
 
+<<<<<<< HEAD
             assigned = {}
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
             for s in reversed(b.stmts[:-1]):
                 if id(s) in hidden_stmts:
                     continue
                 if isinstance(s, ir.Assign) and isinstance(s.dst, ir.Reg):
                     dname = s.dst.name
+<<<<<<< HEAD
                     if dname not in assigned:
                         assigned[dname] = s.src
                 elif isinstance(s, ir.Swap):
@@ -478,6 +490,26 @@ def _infer_return(func, hidden_stmts):
                 cand_reg = "cy"
                 cand_expr = assigned["cy"] if isinstance(assigned["cy"], ir.Const) else ir.Reg("cy")
 
+=======
+                    if dname in ("bc", "ax"):
+                        cand_type = "uint16_t"
+                        cand_expr = s.src if isinstance(s.src, ir.Const) else ir.Reg(dname)
+                        cand_reg = dname
+                        break
+                    elif dname in ("c", "a"):
+                        cand_type = "uint8_t"
+                        cand_expr = s.src if isinstance(s.src, ir.Const) else ir.Reg(dname)
+                        cand_reg = dname
+                        break
+                    elif dname == "cy":
+                        cand_type = "bool"
+                        cand_expr = s.src if isinstance(s.src, ir.Const) else ir.Reg("cy")
+                        cand_reg = dname
+                        break
+                elif isinstance(s, (ir.Call, ir.Intrinsic, ir.Branch, ir.Goto)):
+                    break
+
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
             if cand_type != "void":
                 exit_ret_info.append((b, cand_type, cand_expr, cand_reg))
 
@@ -504,9 +536,13 @@ def _infer_return(func, hidden_stmts):
 
 
 
+<<<<<<< HEAD
 CALL_RETURN_ATOMS = {"x", "a", "c", "b", "e", "d"}
 SCRATCH_ATOMS = {"x", "a", "c", "b"}
 VOLATILE_ATOMS = {"x", "a", "c", "b", "e", "d"}
+=======
+VOLATILE_ATOMS = {"x", "a", "c", "b"}
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 
 def _find_following_stmts(func, b, i, hidden_stmts):
@@ -537,6 +573,7 @@ def _find_following_stmts(func, b, i, hidden_stmts):
 
 def _infer_call_return(func, b, i, frame_info):
     """Determine the return register and whether the return assignment can be folded."""
+<<<<<<< HEAD
     s_call = b.stmts[i]
     if getattr(s_call, "target", None) and callee_returns_dword(s_call.target):
         return ir.Reg("de:bc", width="d"), None
@@ -553,6 +590,17 @@ def _infer_call_return(func, b, i, frame_info):
         def collect_reg_names(e):
             if isinstance(e, ir.Reg):
                 cur_stmt_used_names.add(e.name)
+=======
+    stmts_after = _find_following_stmts(func, b, i, frame_info.hidden_stmts)
+    killed_atoms = set()
+
+    for s in stmts_after:
+        used_reg_names = set()
+
+        def collect_reg_names(e):
+            if isinstance(e, ir.Reg):
+                used_reg_names.add(e.name)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
             elif isinstance(e, ir.Bin):
                 collect_reg_names(e.l)
                 collect_reg_names(e.r)
@@ -587,7 +635,11 @@ def _infer_call_return(func, b, i, frame_info):
             if s.bittest:
                 collect_reg_names(s.bittest[0])
             if s.cond in ("c", "nc"):
+<<<<<<< HEAD
                 cur_stmt_used_names.add("cy")
+=======
+                used_reg_names.add("cy")
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         elif isinstance(s, ir.Ret) and s.val:
             collect_reg_names(s.val)
         elif isinstance(s, ir.Swap):
@@ -599,19 +651,62 @@ def _infer_call_return(func, b, i, frame_info):
         elif isinstance(s, ir.Switch):
             collect_reg_names(s.expr)
 
+<<<<<<< HEAD
         stmt_has_unbilled_use = False
         for rname in cur_stmt_used_names:
+=======
+        used_volatile_atoms = set()
+        for rname in used_reg_names:
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
             if rname == "psw":
                 continue
             for a in regs.atoms(rname):
                 if (a in VOLATILE_ATOMS or a == "cy") and a not in killed_atoms:
                     used_volatile_atoms.add(a)
+<<<<<<< HEAD
                     used_reg_names.add(rname)
                     stmt_has_unbilled_use = True
 
         if stmt_has_unbilled_use and first_ret_assign is None:
             if isinstance(s, ir.Assign) and isinstance(s.src, ir.Reg):
                 first_ret_assign = s
+=======
+
+        if used_volatile_atoms:
+            if ("bc" in used_reg_names and "b" not in killed_atoms and "c" not in killed_atoms) or (
+                "b" in used_volatile_atoms and "c" in used_volatile_atoms
+            ):
+                ret_reg = "bc"
+            elif "c" in used_volatile_atoms:
+                ret_reg = "c"
+            elif "b" in used_volatile_atoms:
+                ret_reg = "bc"
+            elif ("ax" in used_reg_names and "a" not in killed_atoms and "x" not in killed_atoms) or (
+                "a" in used_volatile_atoms and "x" in used_volatile_atoms
+            ):
+                ret_reg = "ax"
+            elif "a" in used_volatile_atoms:
+                ret_reg = "a"
+            elif "x" in used_volatile_atoms:
+                ret_reg = "ax"
+            elif "cy" in used_volatile_atoms:
+                ret_reg = "cy"
+            else:
+                ret_reg = None
+
+            if ret_reg:
+                if isinstance(s, ir.Assign) and isinstance(s.src, ir.Reg) and s.src.name == ret_reg:
+                    dst_is_volatile = (
+                        isinstance(s.dst, ir.Reg) and
+                        any(a in VOLATILE_ATOMS for a in regs.atoms(s.dst.name))
+                    )
+                    if not dst_is_volatile:
+                        return s.dst, s
+                    else:
+                        return ir.Reg(ret_reg), None
+                else:
+                    return ir.Reg(ret_reg), None
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
         if isinstance(s, ir.Assign) and isinstance(s.dst, ir.Reg):
             killed_atoms.update(regs.atoms(s.dst.name))
@@ -622,6 +717,7 @@ def _infer_call_return(func, b, i, frame_info):
             killed_atoms.update(VOLATILE_ATOMS)
             killed_atoms.add("cy")
 
+<<<<<<< HEAD
         has_used_de = ("e" in used_volatile_atoms or "d" in used_volatile_atoms)
         has_used_bc = ("b" in used_volatile_atoms or "c" in used_volatile_atoms)
         if has_used_de and has_used_bc:
@@ -677,6 +773,15 @@ def _infer_call_return(func, b, i, frame_info):
 
 
 def _recover_call_sites(func, frame_info, live_atoms=None, proto_params=None):
+=======
+        if VOLATILE_ATOMS.issubset(killed_atoms):
+            break
+
+    return None, None
+
+
+def _recover_call_sites(func, frame_info):
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     """Recover arguments passed at each call site and fold return assignments."""
     for b in func.blocks.values():
         stmts = b.stmts
@@ -709,6 +814,7 @@ def _recover_call_sites(func, frame_info, live_atoms=None, proto_params=None):
                             # Intervening write to memory or local variable: not a call argument setup
                             break
                     elif isinstance(prev, ir.Intrinsic) and prev.name == "push":
+<<<<<<< HEAD
                         if prev.args and isinstance(prev.args[0], ir.Reg) and prev.args[0].name == "bc":
                             for k in range(j - 1, max(-1, j - 4), -1):
                                 p_st = stmts[k]
@@ -719,6 +825,8 @@ def _recover_call_sites(func, frame_info, live_atoms=None, proto_params=None):
                                         break
                                 elif isinstance(p_st, ir.Intrinsic) and p_st.name == "push":
                                     break
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                         caller_pushes.append(prev)
                     else:
                         break
@@ -729,6 +837,7 @@ def _recover_call_sites(func, frame_info, live_atoms=None, proto_params=None):
                 if cleanup_stmt is not None:
                     frame_info.hidden_stmts.add(id(cleanup_stmt))
 
+<<<<<<< HEAD
                 # If ax_arg is not explicitly defined in this block, check if callee expects AX
                 if ax_arg is None and s.target and callee_expects_ax(s.target):
                     caller_has_ax = False
@@ -776,6 +885,22 @@ def _recover_call_sites(func, frame_info, live_atoms=None, proto_params=None):
                         args.append(stack_raw[p_idx])
                         p_idx += 1
                     stack_idx += 1
+=======
+                # Assemble call arguments: registers first
+                if ax_arg is not None:
+                    args.append(ax_arg)
+                if bc_arg is not None:
+                    args.append(bc_arg)
+
+                # Add caller pushed stack arguments
+                if s.args:
+                    args.extend(s.args)
+                elif cleanup_bytes > 0 and caller_pushes:
+                    for push_stmt in caller_pushes:
+                        frame_info.hidden_stmts.add(id(push_stmt))
+                        if push_stmt.args:
+                            args.append(push_stmt.args[0])
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
                 s.args = args
 
@@ -789,18 +914,25 @@ def _recover_call_sites(func, frame_info, live_atoms=None, proto_params=None):
             i += 1
 
 
+<<<<<<< HEAD
 def analyze_calling_convention(func, frame_info, ida_type_info=None, user_proto=None, caller_consensus=None):
+=======
+def analyze_calling_convention(func, frame_info, ida_type_info=None, user_proto=None):
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     """Analyze calling convention, parameters, return types, and call sites."""
     live_atoms = _compute_liveness(func, frame_info.hidden_stmts)
     for hr in getattr(frame_info, "homed_args", []):
         live_atoms.update(regs.atoms(hr))
 
+<<<<<<< HEAD
     if caller_consensus:
         if caller_consensus.get("has_ax") and callee_expects_ax(getattr(func, "entry", None)) is not False:
             live_atoms.update(regs.atoms("ax"))
         if caller_consensus.get("has_bc"):
             live_atoms.update(regs.atoms("bc"))
 
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     params = []
 
     # 1. Register parameter 0 (AX / A)
@@ -818,8 +950,11 @@ def analyze_calling_convention(func, frame_info, ida_type_info=None, user_proto=
                 params.append(Param(u_params[1][0] or "a1", u_params[1][1], "bc"))
             sorted_args = sorted(frame_info.args.items(), key=lambda kv: kv[1][0].offset)
             for i, (name, (var, width)) in enumerate(sorted_args):
+<<<<<<< HEAD
                 if name in ("a0", "a1"):
                     continue
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 idx = 2 + i
                 if idx < len(u_params):
                     p_name, p_type = u_params[idx]
@@ -827,6 +962,7 @@ def analyze_calling_convention(func, frame_info, ida_type_info=None, user_proto=
                 else:
                     tstr = "uint16_t" if width == "w" else "uint8_t"
                     params.append(Param(name, tstr, "stack"))
+<<<<<<< HEAD
             _recover_call_sites(func, frame_info, live_atoms=live_atoms, proto_params=params)
             return FunctionSig(name=func.name, ret_type=ret_type, ret_expr=None, params=params)
 
@@ -913,12 +1049,38 @@ def analyze_calling_convention(func, frame_info, ida_type_info=None, user_proto=
             "has_far_reg": is_far_reg,
             "far_stack_indices": far_stack_indices
         }
+=======
+            _recover_call_sites(func, frame_info)
+            return FunctionSig(name=func.name, ret_type=ret_type, ret_expr=None, params=params)
+
+    if "x" in live_atoms or ("a" in live_atoms and "x" in live_atoms):
+        params.append(Param("a0", "uint16_t", "ax"))
+    elif "a" in live_atoms:
+        params.append(Param("a0", "uint8_t", "a"))
+
+    # 2. Register parameter 1 (BC / C)
+    if "b" in live_atoms or ("b" in live_atoms and "c" in live_atoms):
+        params.append(Param("a1", "uint16_t", "bc"))
+    elif "c" in live_atoms:
+        params.append(Param("a1", "uint8_t", "c"))
+
+    # 3. Stack parameters from frame analysis
+    # Sort stack arguments by offset
+    sorted_args = sorted(frame_info.args.items(), key=lambda kv: kv[1][0].offset)
+    for name, (var, width) in sorted_args:
+        tstr = "uint16_t" if width == "w" else "uint8_t"
+        params.append(Param(name, tstr, "stack"))
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     # 4. Infer return type and expression
     ret_type, ret_expr = _infer_return(func, frame_info.hidden_stmts)
 
     # 5. Recover call-site arguments and fold return values
+<<<<<<< HEAD
     _recover_call_sites(func, frame_info, live_atoms=live_atoms, proto_params=params)
+=======
+    _recover_call_sites(func, frame_info)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     sig = FunctionSig(name=func.name, ret_type=ret_type, ret_expr=ret_expr, params=params)
     return sig

@@ -11,9 +11,11 @@ from . import sfr
 
 
 class Namer:
-    def __init__(self, cell_names=None, code_names=None):
+    def __init__(self, cell_names=None, code_names=None, struct_defs=None, symbol_structs=None):
         self.cell_names = dict(cell_names or {})
         self.code_names = dict(code_names or {})
+        self.struct_defs = dict(struct_defs or {})
+        self.symbol_structs = dict(symbol_structs or {})
 
     def cell(self, addr):
         n = self.cell_names.get(addr)

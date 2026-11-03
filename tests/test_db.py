@@ -4,6 +4,7 @@ Tests for IDA netnode persistence layer in rl78dec.db.
 
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -47,12 +48,22 @@ def test_db_in_memory_persistence():
     db.set_sync_enabled(True)
     assert db.get_sync_enabled() is True
 
+<<<<<<< HEAD
     # 5. Comments
     db.set_line_comment(func_ea, 0x221D, "entry check")
     db.set_line_comment(func_ea, "line_5", "loop starts here")
     assert db.get_line_comments(func_ea) == {"8733": "entry check", "line_5": "loop starts here"}
     db.set_line_comment(func_ea, 0x221D, "")
     assert db.get_line_comments(func_ea) == {"line_5": "loop starts here"}
+=======
+    # 5. Window state persistence
+    db.save_window_state(True, 0x221D, lineno=15, col=4)
+    ws = db.load_window_state()
+    assert ws.get("is_open") is True
+    assert ws.get("func_ea") == 0x221D
+    assert ws.get("lineno") == 15
+    assert ws.get("col") == 4
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     # 6. Clear
     db.clear_func_data(func_ea)
@@ -115,7 +126,46 @@ def test_db_cgen_integration():
     print("ok  test_db_cgen_integration")
 
 
+def test_decompiler_plugin_registration():
+    # Stub IDA modules if not present
+    for mod_name in ["ida_idaapi", "ida_idp", "ida_kernwin", "ida_funcs", "ida_lines"]:
+        if mod_name not in sys.modules:
+            m = types.ModuleType(mod_name)
+            if mod_name == "ida_idaapi":
+                m.plugin_t = object
+                m.PLUGIN_PROC = 0x0008
+                m.PLUGIN_KEEP = 2
+                m.PLUGIN_SKIP = 0
+                m.BADADDR = 0xFFFFFFFF
+            elif mod_name == "ida_kernwin":
+                m.action_handler_t = object
+                m.action_desc_t = lambda *a, **kw: None
+                m.register_action = lambda *a, **kw: True
+                m.unregister_action = lambda *a, **kw: True
+                m.attach_action_to_menu = lambda *a, **kw: True
+                m.add_hotkey = lambda *a, **kw: None
+                m.del_hotkey = lambda *a, **kw: None
+                m.SETMENU_APP = 0
+            elif mod_name == "ida_idp":
+                m.get_idp_name = lambda: "rl78"
+            sys.modules[mod_name] = m
+
+    import rl78dec_plugin
+
+    assert rl78dec_plugin.HOTKEY_DECOMPILE == "F5"
+    assert rl78dec_plugin.ACTION_DECOMPILE == "rl78dec:decompile"
+
+    plugin = rl78dec_plugin.PLUGIN_ENTRY()
+    assert plugin.flags == sys.modules["ida_idaapi"].PLUGIN_PROC
+    assert plugin.comment == "This is a decompilation plugin."
+    assert plugin.wanted_hotkey == "F5"
+    assert "F5" in plugin.help
+
+    print("ok  test_decompiler_plugin_registration")
+
+
 if __name__ == "__main__":
     test_db_in_memory_persistence()
     test_db_cgen_integration()
+    test_decompiler_plugin_registration()
     print("\nall db tests passed")

@@ -29,6 +29,7 @@ from . import ir, regs
 _OPS = {
     "+": lambda a, b: a + b,
     "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
     "|": lambda a, b: a | b,
     "&": lambda a, b: a & b,
     "^": lambda a, b: a ^ b,
@@ -43,6 +44,110 @@ _LVAL_ARGS = {
 }
 
 
+def simplify_math(e):
+    if not isinstance(e, ir.Bin):
+        return e
+
+    l = simplify_math(e.l) if isinstance(e.l, ir.Bin) else e.l
+    r = simplify_math(e.r) if isinstance(e.r, ir.Bin) else e.r
+    e = ir.Bin(e.op, l, r)
+
+    if e.op not in ("+", "-"):
+        return e
+
+    terms = {}        # base_expr -> net_coefficient (int)
+    named_consts = {} # Const -> coeff
+    const_val = 0
+    const_width = "b"
+
+    def collect(node, mult):
+        nonlocal const_val, const_width
+        if isinstance(node, ir.Bin):
+            if node.op == "+":
+                collect(node.l, mult)
+                collect(node.r, mult)
+                return
+            elif node.op == "-":
+                collect(node.l, mult)
+                collect(node.r, -mult)
+                return
+            elif node.op == "*":
+                if isinstance(node.r, ir.Const) and getattr(node.r, "name", None) is None:
+                    collect(node.l, mult * node.r.value)
+                    return
+                elif isinstance(node.l, ir.Const) and getattr(node.l, "name", None) is None:
+                    collect(node.r, mult * node.l.value)
+                    return
+        elif isinstance(node, ir.Const):
+            if getattr(node, "name", None):
+                named_consts[node] = named_consts.get(node, 0) + mult
+                return
+            else:
+                const_val += mult * node.value
+                if node.width == "a" or abs(const_val) > 0xFFFF:
+                    const_width = "a"
+                elif node.width == "w" and const_width != "a":
+                    const_width = "w"
+                elif abs(const_val) > 0xFF and const_width == "b":
+                    const_width = "w"
+                return
+        elif isinstance(node, ir.Un) and node.op == "-":
+            collect(node.e, -mult)
+            return
+
+        terms[node] = terms.get(node, 0) + mult
+
+    collect(e, 1)
+
+    parts = []
+    # 1. Variables and general terms
+    for term, coeff in terms.items():
+        if coeff == 0:
+            continue
+        if coeff == 1:
+            parts.append((term, 1))
+        elif coeff > 1:
+            width = getattr(term, "width", "w")
+            parts.append((ir.Bin("*", term, ir.Const(coeff, width)), 1))
+        else:
+            width = getattr(term, "width", "w")
+            parts.append((ir.Bin("*", term, ir.Const(-coeff, width)), -1))
+
+    # 2. Named constants
+    for nconst, coeff in named_consts.items():
+        if coeff == 0:
+            continue
+        if coeff == 1:
+            parts.append((nconst, 1))
+        elif coeff > 1:
+            parts.append((ir.Bin("*", nconst, ir.Const(coeff, nconst.width)), 1))
+        else:
+            parts.append((ir.Bin("*", nconst, ir.Const(-coeff, nconst.width)), -1))
+
+    # 3. Numeric constant
+    if const_val != 0:
+        if abs(const_val) > 0xFFFF:
+            const_width = "a"
+        elif abs(const_val) > 0xFF and const_width == "b":
+            const_width = "w"
+        if const_val > 0:
+            parts.append((ir.Const(const_val, const_width), 1))
+        else:
+            parts.append((ir.Const(-const_val, const_width), -1))
+
+    if not parts:
+        return ir.Const(0)
+
+    first_term, first_sign = parts[0]
+    res = first_term if first_sign > 0 else ir.Un("-", first_term)
+    for p, sign in parts[1:]:
+        if sign > 0:
+            res = ir.Bin("+", res, p)
+        else:
+            res = ir.Bin("-", res, p)
+    return res
+
+
 def _fold(e):
     if isinstance(e, ir.Bin):
         l, r = _fold(e.l), _fold(e.r)
@@ -55,6 +160,19 @@ def _fold(e):
             return l
         if isinstance(l, ir.Const) and l.value == 0 and e.op in ("+", "|", "^"):
             return r
+<<<<<<< HEAD
+=======
+        if isinstance(r, ir.Const) and r.value == 1 and e.op == "*":
+            return l
+        if isinstance(l, ir.Const) and l.value == 1 and e.op == "*":
+            return r
+        if (isinstance(r, ir.Const) and r.value == 0 and e.op == "*") or (isinstance(l, ir.Const) and l.value == 0 and e.op == "*"):
+            return ir.Const(0)
+
+        if e.op in ("+", "-"):
+            return simplify_math(ir.Bin(e.op, l, r))
+
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         return ir.Bin(e.op, l, r)
     if isinstance(e, ir.Un):
         sub = _fold(e.e)
@@ -100,12 +218,17 @@ class Env:
         self.bank = bank              # active register bank (0..3 or None for unknown)
         self.atom_consts = {}         # atom (str) -> int (0..255)
         self.copies = {}              # reg_name (str) -> Expr
+<<<<<<< HEAD
         self.var_consts = {}          # var_name (str) -> int
         self.var_copies = {}          # var_name (str) -> Expr
+=======
+        self.const_names = {}         # reg_name (str) -> str
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     def clear(self):
         self.atom_consts.clear()
         self.copies.clear()
+<<<<<<< HEAD
         self.var_copies.clear()
 
     def set_var_const(self, name, val):
@@ -119,6 +242,9 @@ class Env:
     def kill_var(self, name):
         self.var_consts.pop(name, None)
         self.var_copies.pop(name, None)
+=======
+        self.const_names.clear()
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     def set_bank(self, bank):
         if self.bank != bank:
@@ -128,6 +254,10 @@ class Env:
     def clear_gprs(self):
         for a in regs.GPR_ATOMS:
             self.atom_consts.pop(a, None)
+            self.const_names.pop(a, None)
+        for pair in regs.PAIRS:
+            if any(a in regs.GPR_ATOMS for a in regs.atoms(pair)):
+                self.const_names.pop(pair, None)
         to_del = [k for k, v in self.copies.items()
                   if any(a in regs.GPR_ATOMS for a in regs.atoms(k)) or
                      _mentions_any_atom(v, regs.GPR_ATOMS)]
@@ -139,20 +269,26 @@ class Env:
             self.var_copies.pop(k, None)
 
     def lookup_const(self, reg_name):
+        name = self.const_names.get(reg_name)
         if reg_name in regs.PAIRS:
             v = regs.compose(reg_name, self.atom_consts)
             if v is not None:
-                return ir.Const(v, "w")
+                return ir.Const(v, "w", name=name)
             return None
         v = self.atom_consts.get(reg_name)
         if v is not None:
-            return ir.Const(v, "b")
+            return ir.Const(v, "b", name=name)
         return None
 
     def kill(self, reg_name):
         target_atoms = set(regs.atoms(reg_name))
         for a in target_atoms:
             self.atom_consts.pop(a, None)
+            self.const_names.pop(a, None)
+            for pair in regs.PAIRS:
+                if a in regs.atoms(pair):
+                    self.const_names.pop(pair, None)
+        self.const_names.pop(reg_name, None)
         to_del = [k for k, v in self.copies.items()
                   if bool(set(regs.atoms(k)) & target_atoms) or
                      _mentions_any_atom(v, target_atoms)]
@@ -163,7 +299,7 @@ class Env:
         for k in to_del_vars:
             self.var_copies.pop(k, None)
 
-    def set_const(self, reg_name, val):
+    def set_const(self, reg_name, val, name=None):
         self.kill(reg_name)
         if reg_name in regs.PAIRS:
             decomp = regs.decompose(reg_name, val)
@@ -171,6 +307,8 @@ class Env:
                 self.atom_consts[a] = byte_val
         else:
             self.atom_consts[reg_name] = val & 0xFF
+        if name:
+            self.const_names[reg_name] = name
 
     def set_copy(self, dst_name, src_expr):
         self.kill(dst_name)
@@ -188,12 +326,12 @@ class Env:
         self.kill(b_reg)
 
         if old_b_const is not None:
-            self.set_const(a_reg, old_b_const.value)
+            self.set_const(a_reg, old_b_const.value, getattr(old_b_const, "name", None))
         elif old_b_copy is not None:
             self.set_copy(a_reg, old_b_copy)
 
         if old_a_const is not None:
-            self.set_const(b_reg, old_a_const.value)
+            self.set_const(b_reg, old_a_const.value, getattr(old_a_const, "name", None))
         elif old_a_copy is not None:
             self.set_copy(b_reg, old_a_copy)
 
@@ -536,6 +674,7 @@ def _opt_block(block, default_bank=0, initial_env=None):
                     env.set_bank(None)
                     env.kill("psw")
                 elif isinstance(s.src, ir.Const):
+<<<<<<< HEAD
                     env.set_const(s.dst.name, s.src.value)
                 elif isinstance(s.src, ir.Reg) and env.lookup_const(s.src.name) is not None:
                     env.set_const(s.dst.name, env.lookup_const(s.src.name).value)
@@ -544,6 +683,11 @@ def _opt_block(block, default_bank=0, initial_env=None):
                         env.set_const(s.dst.name, env.var_consts[s.src.name])
                     else:
                         env.set_copy(s.dst.name, s.src)
+=======
+                    env.set_const(s.dst.name, s.src.value, getattr(s.src, "name", None))
+                elif isinstance(s.src, (ir.Reg, ir.Var)):
+                    env.set_copy(s.dst.name, s.src)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 else:
                     env.kill(s.dst.name)
             elif isinstance(s.dst, (ir.StackVar, ir.Var)):

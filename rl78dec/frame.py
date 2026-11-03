@@ -26,9 +26,12 @@ class FrameInfo:
         self.frame_size = 0          # bytes allocated for local variables
         self.saved_regs = []         # list of callee-saved registers pushed at entry
         self.homed_args = []         # list of incoming argument registers pushed/homed at entry
+<<<<<<< HEAD
         self.homed_slot_to_arg = {}  # disp -> "a0" or "a1"
         self.prologue_pushes = []    # list of registers pushed before MOVW HL, SP
         self.arg_base = 4
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         self.locals = {}             # name -> (StackVar, width)
         self.args = {}               # name -> (StackVar, width)
         self.virtual_vars = {}       # name -> (Var, width)
@@ -123,6 +126,7 @@ def _scan_epilogues(func):
     return epilogue_stmts
 
 
+<<<<<<< HEAD
 def _is_disp_read_before_write(func, fp_reg, target_disp):
     """Return True if stack slot [fp_reg + target_disp] is read before being written in func."""
     if not fp_reg:
@@ -200,6 +204,8 @@ def _is_disp_read_before_write(func, fp_reg, target_disp):
     return False
 
 
+=======
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 def analyze_frame(func, ida_frame_info=None):
     """Analyze the stack frame of func, resolving variables and identifying boilerplate."""
     info = FrameInfo(func)
@@ -242,6 +248,7 @@ def analyze_frame(func, ida_frame_info=None):
             popped_regs.add(s.args[0].name)
 
     # Separate true callee-saved registers from homed incoming argument registers
+<<<<<<< HEAD
     # In RL78 ABI:
     # 1. HL and DE are callee-saved.
     # 2. AX is NEVER callee-saved (it is arg 0 / scratch). When pushed in the prologue,
@@ -277,6 +284,17 @@ def analyze_frame(func, ida_frame_info=None):
     info.homed_slot_to_arg = homed_slot_to_arg
     info.arg_base = arg_base
     info.prologue_pushes = list(info.saved_regs)
+=======
+    true_saved = []
+    homed = []
+    for r in info.saved_regs:
+        if r in ("hl", "de") or r in popped_regs:
+            true_saved.append(r)
+        else:
+            homed.append(r)
+    info.saved_regs = true_saved
+    info.homed_args = homed
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     # 3. Mark boilerplate to hide
     for s in info.prologue_stmts:
@@ -292,6 +310,7 @@ def analyze_frame(func, ida_frame_info=None):
         ida_members, ida_stkvars = ida_frame_info
 
     frsize = info.frame_size
+<<<<<<< HEAD
 
     def resolve_disp(disp, width):
         if disp in info.homed_slot_to_arg:
@@ -303,6 +322,18 @@ def analyze_frame(func, ida_frame_info=None):
         elif disp < frsize:
             name = "var_%X" % (frsize - disp)
             return ir.StackVar(name, width, disp, is_arg=False)
+=======
+    saved_size = len(info.saved_regs) * 2
+    arg_base = frsize + saved_size + 4  # 4 bytes far return address
+
+    def resolve_disp(disp, width):
+        if disp < frsize:
+            name = "var_%X" % (frsize - disp)
+            return ir.StackVar(name, width, disp, is_arg=False)
+        elif disp >= arg_base:
+            name = "arg_%X" % (disp - arg_base)
+            return ir.StackVar(name, width, disp, is_arg=True)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         else:
             name = "var_s%X" % (disp - frsize)
             return ir.StackVar(name, width, disp, is_arg=False)
@@ -316,6 +347,7 @@ def analyze_frame(func, ida_frame_info=None):
                     soff = info_tuple[0]
                     name = info_tuple[1]
                     size = info_tuple[2]
+<<<<<<< HEAD
                     if soff in info.homed_slot_to_arg:
                         name = info.homed_slot_to_arg[soff]
                         is_arg = True
@@ -333,6 +365,16 @@ def analyze_frame(func, ida_frame_info=None):
                         info.locals[name] = (v, w)
                     return v
                     return v
+=======
+                    is_arg = info_tuple[3] if len(info_tuple) > 3 else name.startswith("arg_")
+                    w = "w" if size == 2 else "b"
+                    v = ir.StackVar(name, w, soff, is_arg=is_arg)
+                    if is_arg:
+                        info.args[name] = (v, w)
+                    else:
+                        info.locals[name] = (v, w)
+                    return v
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
             # Standalone frame resolution
             disp = None
@@ -354,6 +396,7 @@ def analyze_frame(func, ida_frame_info=None):
             if disp is not None:
                 v = resolve_disp(disp, e.width)
                 if v.is_arg:
+<<<<<<< HEAD
                     prev_w = info.args.get(v.name, (None, None))[1]
                     w = "w" if (e.width == "w" or prev_w == "w") else "b"
                     info.args[v.name] = (v, w)
@@ -361,6 +404,11 @@ def analyze_frame(func, ida_frame_info=None):
                     prev_w = info.locals.get(v.name, (None, None))[1]
                     w = "w" if (e.width == "w" or prev_w == "w") else "b"
                     info.locals[v.name] = (v, w)
+=======
+                    info.args[v.name] = (v, e.width)
+                else:
+                    info.locals[v.name] = (v, e.width)
+>>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 return v
 
         if isinstance(e, ir.Bin):
