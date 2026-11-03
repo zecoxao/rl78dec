@@ -160,8 +160,6 @@ def _fold(e):
             return l
         if isinstance(l, ir.Const) and l.value == 0 and e.op in ("+", "|", "^"):
             return r
-<<<<<<< HEAD
-=======
         if isinstance(r, ir.Const) and r.value == 1 and e.op == "*":
             return l
         if isinstance(l, ir.Const) and l.value == 1 and e.op == "*":
@@ -172,7 +170,6 @@ def _fold(e):
         if e.op in ("+", "-"):
             return simplify_math(ir.Bin(e.op, l, r))
 
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         return ir.Bin(e.op, l, r)
     if isinstance(e, ir.Un):
         sub = _fold(e.e)
@@ -218,18 +215,15 @@ class Env:
         self.bank = bank              # active register bank (0..3 or None for unknown)
         self.atom_consts = {}         # atom (str) -> int (0..255)
         self.copies = {}              # reg_name (str) -> Expr
-<<<<<<< HEAD
         self.var_consts = {}          # var_name (str) -> int
         self.var_copies = {}          # var_name (str) -> Expr
-=======
         self.const_names = {}         # reg_name (str) -> str
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     def clear(self):
         self.atom_consts.clear()
         self.copies.clear()
-<<<<<<< HEAD
         self.var_copies.clear()
+        self.const_names.clear()
 
     def set_var_const(self, name, val):
         self.var_copies.pop(name, None)
@@ -242,9 +236,6 @@ class Env:
     def kill_var(self, name):
         self.var_consts.pop(name, None)
         self.var_copies.pop(name, None)
-=======
-        self.const_names.clear()
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     def set_bank(self, bank):
         if self.bank != bank:
@@ -674,20 +665,15 @@ def _opt_block(block, default_bank=0, initial_env=None):
                     env.set_bank(None)
                     env.kill("psw")
                 elif isinstance(s.src, ir.Const):
-<<<<<<< HEAD
-                    env.set_const(s.dst.name, s.src.value)
+                    env.set_const(s.dst.name, s.src.value, getattr(s.src, "name", None))
                 elif isinstance(s.src, ir.Reg) and env.lookup_const(s.src.name) is not None:
-                    env.set_const(s.dst.name, env.lookup_const(s.src.name).value)
+                    c = env.lookup_const(s.src.name)
+                    env.set_const(s.dst.name, c.value, getattr(c, "name", None))
                 elif isinstance(s.src, (ir.Reg, ir.Var, ir.StackVar)):
                     if isinstance(s.src, (ir.Var, ir.StackVar)) and s.src.name in env.var_consts:
                         env.set_const(s.dst.name, env.var_consts[s.src.name])
                     else:
                         env.set_copy(s.dst.name, s.src)
-=======
-                    env.set_const(s.dst.name, s.src.value, getattr(s.src, "name", None))
-                elif isinstance(s.src, (ir.Reg, ir.Var)):
-                    env.set_copy(s.dst.name, s.src)
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 else:
                     env.kill(s.dst.name)
             elif isinstance(s.dst, (ir.StackVar, ir.Var)):

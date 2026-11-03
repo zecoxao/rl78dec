@@ -9,15 +9,8 @@ Provides:
   - Jumping to symbols and disassembly ('Enter' / 'Space' / double-click).
   - Call navigation history with 'Esc' back-stepping.
   - Refreshing decompilation ('F5').
-<<<<<<< HEAD
   - Hex-Rays standard 'Tab' switching between disassembly and pseudocode.
 - Reusable dockable window that updates in place during navigation.
-=======
-- Caret token occurrence highlighting using SCOLOR_EXTRA.
-- Navigation history stack (forward navigation on symbol click, back with 'Esc').
-- Decompiler window state persistence across IDA sessions via netnodes.
-- Automatic docking beside IDA View-A.
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 """
 
 import re
@@ -77,7 +70,6 @@ _EA = re.compile(r"\b(?:loc_|sub_)([0-9A-Fa-f]+)\b")
 _ADDR_HEX = re.compile(r"\b0x([0-9A-Fa-f]{4,6})\b")
 _VIEW_TITLE = "rl78dec - Pseudocode"
 
-ACTION_DECOMPILE = "rl78dec:decompile"
 ACTION_RENAME = "rl78dec:rename_var"
 ACTION_SET_TYPE = "rl78dec:set_type"
 ACTION_TOGGLE_SYNC = "rl78dec:toggle_sync"
@@ -203,7 +195,6 @@ class _DecompilerView(_simplecustviewer_base):
         self.raw_lines = []
         self.ea_to_line = {}
         self.sync_with_disasm = db.get_sync_enabled()
-<<<<<<< HEAD
         self.show_ir = False
         self._is_syncing = False
         self._nav_history = []
@@ -259,11 +250,6 @@ class _DecompilerView(_simplecustviewer_base):
         if hasattr(self, "line_ea") and 0 <= line_idx < len(self.line_ea):
             return self.line_ea[line_idx]
         return None
-=======
-        self._nav_history = []
-        self._last_token = None
-        self._highlighted_token_lines = set()
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     def build_or_refresh(self, fn):
         """Populate or update lines with decompiled Function fn."""
@@ -271,7 +257,6 @@ class _DecompilerView(_simplecustviewer_base):
         self.current_func_name = fn.name
         self.line_ea = list(getattr(fn, "line_ea", []))
         self.raw_lines = list(fn.lines)
-<<<<<<< HEAD
         self.ea_to_line = {}
 
         self.ClearLines()
@@ -283,17 +268,6 @@ class _DecompilerView(_simplecustviewer_base):
             if ea is not None and ea not in self.ea_to_line:
                 self.ea_to_line[ea] = idx
 
-=======
-        self._last_token = None
-        self._highlighted_token_lines.clear()
-
-        self.ClearLines()
-        fn_line_eas = getattr(fn, "line_eas", None) or getattr(fn.lines, "line_eas", None)
-        for i, ln in enumerate(fn.lines):
-            self.AddLine(highlight.colorize(ln))
-            ea = fn_line_eas[i] if (fn_line_eas and i < len(fn_line_eas)) else None
-            self.line_ea.append(ea if ea is not None else _line_ea(ln))
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         self.Refresh()
         self.save_state(is_open=True)
 
@@ -359,53 +333,6 @@ class _DecompilerView(_simplecustviewer_base):
         while end < len(line) and (line[end].isalnum() or line[end] == "_"):
             end += 1
         return line[start:end], lineno
-
-    def _update_token_highlight(self):
-        """Highlight all occurrences of the identifier under caret across the view."""
-        if not self.raw_lines:
-            return
-        word, lineno = self.get_word_under_cursor()
-        active_token = None
-        if word and (word[0].isalpha() or word[0] == "_"):
-            if word not in highlight.C_KEYWORDS and word not in highlight.C_TYPES:
-                active_token = word
-
-        if active_token == self._last_token:
-            return
-
-        self._last_token = active_token
-
-        to_restore = set(self._highlighted_token_lines)
-        self._highlighted_token_lines.clear()
-
-        new_matching = set()
-        if active_token:
-            pat = re.compile(r"\b" + re.escape(active_token) + r"\b")
-            for idx, raw in enumerate(self.raw_lines):
-                if pat.search(raw):
-                    new_matching.add(idx)
-
-        affected = to_restore.union(new_matching)
-        for idx in affected:
-            if 0 <= idx < len(self.raw_lines):
-                try:
-                    colored = highlight.colorize(self.raw_lines[idx], highlight_ident=active_token)
-                    self.EditLine(idx, colored)
-                    if idx in new_matching:
-                        self._highlighted_token_lines.add(idx)
-                except Exception:
-                    pass
-        if affected:
-            try:
-                self.RefreshCurrent()
-            except Exception:
-                pass
-
-    def OnCursorPosChanged(self):
-        self._update_token_highlight()
-
-    def OnClick(self, shift):
-        self._update_token_highlight()
 
     def on_rename(self):
         """Rename variable or function under cursor and persist in IDB netnode."""
@@ -531,7 +458,6 @@ class _DecompilerView(_simplecustviewer_base):
         - Fallback: jump disassembly to the originating instruction address of the current line.
         """
         word, lineno = self.get_word_under_cursor()
-<<<<<<< HEAD
         target_ea = resolve_symbol_ea(word, self.current_func_ea)
 
         bad_addr = getattr(ida_idaapi, "BADADDR", 0xFFFFFFFFFFFFFFFF)
@@ -572,47 +498,6 @@ class _DecompilerView(_simplecustviewer_base):
                 return True
 
         # 4. Fallback: Jump disassembly to line's instruction address
-=======
-        if word:
-            # Check if word is a named symbol in IDA (variable, function, label, SFR)
-            try:
-                import ida_name, ida_idaapi
-                target_ea = ida_name.get_name_ea(ida_idaapi.BADADDR, word)
-                if target_ea != ida_idaapi.BADADDR:
-                    pfn = ida_funcs.get_func(target_ea)
-                    if pfn and pfn.start_ea == target_ea:
-                        idaapi.jumpto(target_ea)
-                        if target_ea != self.current_func_ea:
-                            pos = self.GetPos()
-                            self._nav_history.append((self.current_func_ea, pos[0] if pos else 0, pos[1] if pos else 0))
-                            self.show_func(target_ea)
-                        return True
-                    else:
-                        idaapi.jumpto(target_ea)
-                        return True
-            except Exception:
-                pass
-
-            # If word is a function or label address
-            m = _EA.search(word) or _ADDR_HEX.search(word)
-            if m:
-                try:
-                    target_ea = int(m.group(1), 16)
-                    pfn = ida_funcs.get_func(target_ea)
-                    if pfn and pfn.start_ea == target_ea:
-                        idaapi.jumpto(target_ea)
-                        if target_ea != self.current_func_ea:
-                            pos = self.GetPos()
-                            self._nav_history.append((self.current_func_ea, pos[0] if pos else 0, pos[1] if pos else 0))
-                            self.show_func(target_ea)
-                        return True
-                    else:
-                        idaapi.jumpto(target_ea)
-                        return True
-                except ValueError:
-                    pass
-
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         if lineno is not None and lineno < len(self.line_ea):
             ea = self.line_ea[lineno]
             if ea is not None and idaapi:
@@ -631,11 +516,10 @@ class _DecompilerView(_simplecustviewer_base):
         if vkey in (ord('Y'), ord('y')):
             self.on_set_type()
             return True
-        if vkey == 116:  # F5
+        if vkey == 116: # F5
             if self.current_func_ea is not None:
                 self.show_func(self.current_func_ea)
             return True
-<<<<<<< HEAD
         if vkey in (13, 32): # Enter or Space
             return self.jump_symbol_or_disasm()
         if vkey == 9: # Tab
@@ -662,27 +546,10 @@ class _DecompilerView(_simplecustviewer_base):
                         idaapi.jumpto(target_disasm)
                     finally:
                         self._is_syncing = False
-=======
-        if vkey in (13, 32):  # Enter or Space
-            return self.jump_disasm()
-        if vkey == 9:  # Tab
-            self.toggle_sync()
-            return True
-        if vkey == 27:  # Esc
-            if self._nav_history:
-                prev_ea, prev_line, prev_col = self._nav_history.pop()
-                self.show_func(prev_ea)
-                try:
-                    self.Jump(prev_line, prev_col)
-                except Exception:
-                    pass
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 return True
             global _active_viewer
             self.save_state(is_open=False)
             _active_viewer = None
-            if self.current_func_ea is not None:
-                db.save_window_state(False, self.current_func_ea)
             self.Close()
             return True
         return False
@@ -741,57 +608,6 @@ class _UIHooks(_ui_hooks_base):
         super().__init__()
         self.view = view
 
-    def create_desktop_widget(self, title, cfg):
-        if title == _VIEW_TITLE:
-            global _active_viewer
-            if _active_viewer is None or _active_viewer.GetWidget() is None:
-                v = _DecompilerView()
-                if v.Create(_VIEW_TITLE):
-                    _active_viewer = v
-                    _register_actions(_active_viewer)
-                    self.view = _active_viewer
-                    return _active_viewer.GetWidget()
-            else:
-                return _active_viewer.GetWidget()
-        return None
-
-    def desktop_applied(self, name, from_idb, type):
-        self._restore_from_state()
-
-    def database_inited(self, is_new_database):
-        self._restore_from_state()
-
-    def saving(self):
-        self._record_current_state()
-
-    def saved(self):
-        self._record_current_state()
-
-    def _record_current_state(self):
-        global _active_viewer
-        if _active_viewer is not None and _active_viewer.GetWidget() is not None:
-            pos = _active_viewer.GetPos() or (0, 0)
-            if _active_viewer.current_func_ea is not None:
-                db.save_window_state(True, _active_viewer.current_func_ea,
-                                     lineno=pos[0], col=pos[1])
-
-    def _restore_from_state(self):
-        global _active_viewer
-        state = db.load_window_state()
-        if not state.get("is_open") or not state.get("func_ea"):
-            return
-        func_ea = state["func_ea"]
-        lineno = state.get("lineno", 0)
-        col = state.get("col", 0)
-        if _active_viewer is not None and _active_viewer.GetWidget() is not None:
-            if _active_viewer.current_func_ea != func_ea or not _active_viewer.raw_lines:
-                _active_viewer.show_func(func_ea)
-            if lineno:
-                try:
-                    _active_viewer.Jump(lineno, col)
-                except Exception:
-                    pass
-
     def screen_ea_changed(self, ea, prev_ea):
         """Automatically follow disassembly cursor in the decompiler view."""
         if not self.view or not self.view.sync_with_disasm:
@@ -832,8 +648,6 @@ class _UIHooks(_ui_hooks_base):
         if self.view and widget == self.view.GetWidget():
             self.view.save_state(is_open=False)
             global _active_viewer
-            if self.view.current_func_ea is not None:
-                db.save_window_state(False, self.view.current_func_ea)
             _active_viewer = None
 
     def widget_invisible(self, widget):
@@ -926,11 +740,6 @@ class _UIHooks(_ui_hooks_base):
 
     def finish_populating_widget_popup(self, widget, popup_handle):
         """Attach decompiler context actions to the right-click popup menu."""
-        wtype = ida_kernwin.get_widget_type(widget)
-        if wtype == ida_kernwin.BWN_DISASM:
-            ida_kernwin.attach_action_to_popup(widget, popup_handle, ACTION_DECOMPILE)
-            return
-
         if not self.view:
             return
         view_widget = self.view.GetWidget()
@@ -1009,19 +818,13 @@ def _register_actions(view):
 
 def show(function, dock=True):
     """Open or refresh the dockable decompiler view for the specified function."""
-<<<<<<< HEAD
     global _active_viewer, _ui_hooks, _view_hooks
-=======
-    global _active_viewer, _ui_hooks
-    first_create = False
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     if _active_viewer is None or _active_viewer.GetWidget() is None:
         v = _DecompilerView()
         if not v.Create(_VIEW_TITLE):
             return None
         _active_viewer = v
         _register_actions(_active_viewer)
-        first_create = True
 
         if _ui_hooks is None and ida_kernwin:
             _ui_hooks = _UIHooks(_active_viewer)
@@ -1043,7 +846,6 @@ def show(function, dock=True):
     _active_viewer.build_or_refresh(function)
     _active_viewer.Show()
 
-<<<<<<< HEAD
     # Dock beside IDA View-A if in GUI mode
     if dock and ida_kernwin and hasattr(ida_kernwin, "is_idaq") and ida_kernwin.is_idaq():
         try:
@@ -1164,27 +966,6 @@ def init_hooks():
     if _view_hooks is None and ida_kernwin:
         _view_hooks = _ViewHooks(None)
         _view_hooks.hook()
-=======
-    if first_create:
-        try:
-            ida_kernwin.set_dock_pos(_VIEW_TITLE, "IDA View-A", ida_kernwin.DP_RIGHT)
-        except Exception:
-            pass
-
-    if _active_viewer.current_func_ea is not None:
-        pos = _active_viewer.GetPos() or (0, 0)
-        db.save_window_state(True, _active_viewer.current_func_ea, lineno=pos[0], col=pos[1])
-
-    return _active_viewer
-
-
-def init_hooks():
-    """Initialize UI hooks early (at plugin load) to support desktop/docking persistence."""
-    global _ui_hooks
-    if _ui_hooks is None:
-        _ui_hooks = _ViewHooks(None)
-        _ui_hooks.hook()
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 
 def show_listing(title, lines):
@@ -1209,11 +990,7 @@ def cleanup():
         except Exception:
             pass
         _ui_hooks = None
-<<<<<<< HEAD
     if _view_hooks is not None:
-=======
-    for action_id in [ACTION_DECOMPILE, ACTION_RENAME, ACTION_SET_TYPE, ACTION_TOGGLE_SYNC, ACTION_JUMP_DISASM, ACTION_REFRESH]:
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         try:
             _view_hooks.unhook()
         except Exception:

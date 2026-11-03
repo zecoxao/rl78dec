@@ -10,10 +10,7 @@ It runs on a database opened with fail0verflow's RL78 processor module
 (https://github.com/fail0verflow/rl78-ida-proc):
 
     F5             decompile the function under the cursor (or refresh)
-<<<<<<< HEAD
     Tab            switch between disassembly and pseudocode
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     Ctrl-Shift-S   legacy decompile shortcut
     Ctrl-F5        decompile every function in the database
 """
@@ -39,18 +36,12 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 HOTKEY_DECOMPILE = "F5"
-<<<<<<< HEAD
 HOTKEY_TAB = "Tab"
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 HOTKEY_LEGACY = "Ctrl-Shift-S"
 HOTKEY_ALL = "Ctrl-F5"
 
 ACTION_DECOMPILE = "rl78dec:decompile"
-<<<<<<< HEAD
 ACTION_TAB = "rl78dec:tab_switch"
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 MENU_PSEUDOCODE_PATH = "View/Open subviews/Generate pseudocode"
 MENU_PLUGIN_PATH = "Edit/Plugins/RL78 decompiler (rl78dec)"
 
@@ -65,17 +56,12 @@ def _is_rl78():
         return False
 
 
-<<<<<<< HEAD
 class _DecompileActionHandler(ida_kernwin.action_handler_t if ida_kernwin else object):
-=======
-class _DecompileActionHandler(ida_kernwin.action_handler_t):
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     def activate(self, ctx):
         _run_one()
         return 1
 
     def update(self, ctx):
-<<<<<<< HEAD
         if not ida_kernwin:
             return 0
         return ida_kernwin.AST_ENABLE_ALWAYS
@@ -94,11 +80,6 @@ class _TabActionHandler(ida_kernwin.action_handler_t if ida_kernwin else object)
         return ida_kernwin.AST_DISABLE_FOR_WIDGET
 
 
-=======
-        return ida_kernwin.AST_ENABLE_ALWAYS
-
-
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 def _run_one():
     from rl78dec import ida_bridge, view
     if not _is_rl78():
@@ -165,11 +146,8 @@ def _run_all():
 
 
 def _register_actions():
-<<<<<<< HEAD
     if not ida_kernwin:
         return
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     ida_kernwin.unregister_action(ACTION_DECOMPILE)
     desc = ida_kernwin.action_desc_t(
         ACTION_DECOMPILE,
@@ -183,7 +161,6 @@ def _register_actions():
         ida_kernwin.attach_action_to_menu(MENU_PSEUDOCODE_PATH, ACTION_DECOMPILE, ida_kernwin.SETMENU_APP)
         ida_kernwin.attach_action_to_menu(MENU_PLUGIN_PATH, ACTION_DECOMPILE, ida_kernwin.SETMENU_APP)
 
-<<<<<<< HEAD
     ida_kernwin.unregister_action(ACTION_TAB)
     desc_tab = ida_kernwin.action_desc_t(
         ACTION_TAB,
@@ -199,10 +176,6 @@ def _register_actions():
 def _unregister_actions():
     if not ida_kernwin:
         return
-=======
-
-def _unregister_actions():
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     try:
         ida_kernwin.detach_action_from_menu(MENU_PSEUDOCODE_PATH, ACTION_DECOMPILE)
     except Exception:
@@ -215,7 +188,6 @@ def _unregister_actions():
         ida_kernwin.unregister_action(ACTION_DECOMPILE)
     except Exception:
         pass
-<<<<<<< HEAD
     try:
         ida_kernwin.unregister_action(ACTION_TAB)
     except Exception:
@@ -224,12 +196,6 @@ def _unregister_actions():
 
 class Rl78DecPlugin(ida_idaapi.plugin_t if ida_idaapi else object):
     flags = ida_idaapi.PLUGIN_PROC if ida_idaapi else 0
-=======
-
-
-class Rl78DecPlugin(ida_idaapi.plugin_t):
-    flags = ida_idaapi.PLUGIN_PROC
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     comment = "This is a decompilation plugin."
     help = "%s decompiles the current function, %s decompiles everything." % (HOTKEY_DECOMPILE, HOTKEY_ALL)
     wanted_name = "RL78 decompiler (rl78dec)"
@@ -237,11 +203,7 @@ class Rl78DecPlugin(ida_idaapi.plugin_t):
 
     def init(self):
         if not _is_rl78():
-<<<<<<< HEAD
             return ida_idaapi.PLUGIN_SKIP if ida_idaapi else 0
-=======
-            return ida_idaapi.PLUGIN_SKIP
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
         _register_actions()
 
@@ -257,16 +219,10 @@ class Rl78DecPlugin(ida_idaapi.plugin_t):
         try:
             from rl78dec import view
             view.init_hooks()
-<<<<<<< HEAD
             view.check_and_restore_saved_view()
         except Exception:
             pass
         return ida_idaapi.PLUGIN_KEEP if ida_idaapi else 0
-=======
-        except Exception:
-            pass
-        return ida_idaapi.PLUGIN_KEEP
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     def run(self, arg):
         _run_one()

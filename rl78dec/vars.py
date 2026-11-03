@@ -27,22 +27,15 @@ from . import ir, regs
 
 GPR_WORD = {"ax", "bc", "de", "hl"}
 GPR_BYTE = {"a", "x", "b", "c", "d", "e", "h", "l"}
-<<<<<<< HEAD
 GPR_DWORD = {"de:bc"}
 ALL_GPR = GPR_WORD | GPR_BYTE | GPR_DWORD
-=======
-ALL_GPR = GPR_WORD | GPR_BYTE
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 ATOM_PAIRS = {
     "ax": ("x", "a"),
     "bc": ("c", "b"),
     "de": ("e", "d"),
     "hl": ("l", "h"),
-<<<<<<< HEAD
     "de:bc": ("c", "b", "e", "d"),
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
     "a": ("a",),
     "x": ("x",),
     "b": ("b",),
@@ -54,11 +47,7 @@ ATOM_PAIRS = {
 }
 
 ALL_ATOMS = ("x", "a", "c", "b", "e", "d", "l", "h")
-<<<<<<< HEAD
 CALLER_SAVED_ATOMS = {"x", "a", "c", "b", "e", "d"}
-=======
-CALLER_SAVED_ATOMS = {"x", "a", "c", "b"}
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
 
 class _UnionFind:
@@ -79,7 +68,6 @@ class _UnionFind:
             self.parent[rx] = ry
 
 
-<<<<<<< HEAD
 def _is_vvar(name):
     if not isinstance(name, str):
         return False
@@ -90,12 +78,6 @@ def _collect_expr_atoms(e, out):
     """Recursively collect register reads and spill variables from expression e."""
     if isinstance(e, ir.Reg) and e.name in ATOM_PAIRS:
         is_word = e.name in GPR_WORD or e.name in GPR_DWORD
-=======
-def _collect_expr_atoms(e, out):
-    """Recursively collect register reads and spill variables from expression e."""
-    if isinstance(e, ir.Reg) and e.name in ATOM_PAIRS:
-        is_word = e.name in GPR_WORD
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         out.append((e.name, ATOM_PAIRS[e.name], is_word))
     elif isinstance(e, ir.Var) and e.name.startswith("_s"):
         out.append((e.name, (e.name,), e.width == "w"))
@@ -179,16 +161,11 @@ def _get_stmt_defs(s):
     clobbers = []
     if isinstance(s, ir.Assign):
         if isinstance(s.dst, ir.Reg) and s.dst.name in ATOM_PAIRS:
-<<<<<<< HEAD
             defs.append((s.dst.name, ATOM_PAIRS[s.dst.name], s.dst.name in GPR_WORD or s.dst.name in GPR_DWORD))
-=======
-            defs.append((s.dst.name, ATOM_PAIRS[s.dst.name], s.dst.name in GPR_WORD))
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         elif isinstance(s.dst, ir.Var) and s.dst.name.startswith("_s"):
             defs.append((s.dst.name, (s.dst.name,), s.dst.width == "w"))
     elif isinstance(s, ir.Swap):
         if isinstance(s.a, ir.Reg) and s.a.name in ATOM_PAIRS:
-<<<<<<< HEAD
             defs.append((s.a.name, ATOM_PAIRS[s.a.name], s.a.name in GPR_WORD or s.a.name in GPR_DWORD))
         if isinstance(s.b, ir.Reg) and s.b.name in ATOM_PAIRS:
             defs.append((s.b.name, ATOM_PAIRS[s.b.name], s.b.name in GPR_WORD or s.b.name in GPR_DWORD))
@@ -205,19 +182,6 @@ def _get_stmt_defs(s):
             preserved_atoms.update(ATOM_PAIRS.get(pr, (pr,)))
         for atom in CALLER_SAVED_ATOMS:
             if atom not in defined_atoms and atom not in preserved_atoms:
-=======
-            defs.append((s.a.name, ATOM_PAIRS[s.a.name], s.a.name in GPR_WORD))
-        if isinstance(s.b, ir.Reg) and s.b.name in ATOM_PAIRS:
-            defs.append((s.b.name, ATOM_PAIRS[s.b.name], s.b.name in GPR_WORD))
-    elif isinstance(s, ir.Call):
-        if isinstance(s.dst, ir.Reg) and s.dst.name in ATOM_PAIRS:
-            defs.append((s.dst.name, ATOM_PAIRS[s.dst.name], s.dst.name in GPR_WORD))
-        defined_atoms = set()
-        for _, atoms, _ in defs:
-            defined_atoms.update(atoms)
-        for atom in CALLER_SAVED_ATOMS:
-            if atom not in defined_atoms:
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 clobbers.append(atom)
     return defs, clobbers
 
@@ -246,14 +210,11 @@ def _subst_ast(e, repl_map):
     if isinstance(e, ir.Var) and e.name in repl_map:
         return repl_map[e.name]
     if isinstance(e, ir.Bin):
-<<<<<<< HEAD
         if e.op == ">>" and isinstance(e.r, ir.Const) and e.r.value >= 8:
             if isinstance(e.l, ir.Reg) and e.l.name in repl_map:
                 v = repl_map[e.l.name]
                 if getattr(v, "width", None) == "b":
                     return v
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         nl = _subst_ast(e.l, repl_map)
         nr = _subst_ast(e.r, repl_map)
         if nl is not e.l or nr is not e.r:
@@ -503,11 +464,7 @@ def _compute_var_liveness(func, hidden):
             used = set()
 
             def collect_v(e):
-<<<<<<< HEAD
                 if isinstance(e, ir.Var) and _is_vvar(e.name):
-=======
-                if isinstance(e, ir.Var) and e.name.startswith("v") and e.name[1:].isdigit():
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                     used.add(e.name)
                 elif isinstance(e, ir.Bin):
                     collect_v(e.l)
@@ -565,11 +522,7 @@ def _compute_var_liveness(func, hidden):
                     gen.add(u)
 
             if isinstance(s, (ir.Assign, ir.Call)) and isinstance(s.dst, ir.Var):
-<<<<<<< HEAD
                 if _is_vvar(s.dst.name):
-=======
-                if s.dst.name.startswith("v") and s.dst.name[1:].isdigit():
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                     kill.add(s.dst.name)
 
         block_gen[b.start] = gen
@@ -680,11 +633,7 @@ def _fold_temp_copies(func, hidden):
 
         def try_fold_pair(s_prod, b_use, copy_idx):
             v = s_prod.dst
-<<<<<<< HEAD
             if not (isinstance(v, ir.Var) and _is_vvar(v.name)):
-=======
-            if not (isinstance(v, ir.Var) and v.name.startswith("v") and v.name[1:].isdigit()):
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 return False
             if def_count.get(v.name, 0) != 1:
                 return False
@@ -752,11 +701,7 @@ def _fold_temp_copies(func, hidden):
 
                 if isinstance(s, (ir.Call, ir.Assign)) and isinstance(s.dst, ir.Var):
                     v = s.dst
-<<<<<<< HEAD
                     if _is_vvar(v.name) and def_count.get(v.name, 0) == 1:
-=======
-                    if v.name.startswith("v") and v.name[1:].isdigit() and def_count.get(v.name, 0) == 1:
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                         # Find next non-hidden, non-Nop statement in b
                         j = i + 1
                         while j < len(stmts) and (id(stmts[j]) in hidden or isinstance(stmts[j], ir.Nop)):
@@ -859,12 +804,7 @@ def _inline_single_use(func, hidden):
             if (
                 isinstance(s, ir.Assign)
                 and isinstance(s.dst, ir.Var)
-<<<<<<< HEAD
                 and _is_vvar(s.dst.name)
-=======
-                and s.dst.name.startswith("v")
-                and s.dst.name[1:].isdigit()
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                 and (s.flag is None or (s.flag.kind == "result" and s.flag.a == s.dst))
                 and use_count.get(s.dst.name, 0) == 1
                 and def_count.get(s.dst.name, 0) == 1
@@ -922,20 +862,12 @@ def _eliminate_dead_assignments(func, hidden, sig=None):
                             any_changed = True
                             continue
                     # Check compiler-generated virtual variables (v0, v1, ...)
-<<<<<<< HEAD
                     elif isinstance(s.dst, ir.Var) and _is_vvar(s.dst.name):
-=======
-                    elif isinstance(s.dst, ir.Var) and s.dst.name.startswith("v") and s.dst.name[1:].isdigit():
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                         if use_count.get(s.dst.name, 0) == 0:
                             changed = True
                             any_changed = True
                             continue
-<<<<<<< HEAD
                 elif isinstance(s, ir.Call) and s.dst and isinstance(s.dst, ir.Var) and _is_vvar(s.dst.name):
-=======
-                elif isinstance(s, ir.Call) and s.dst and isinstance(s.dst, ir.Var) and s.dst.name.startswith("v") and s.dst.name[1:].isdigit():
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                     if use_count.get(s.dst.name, 0) == 0:
                         s.dst = None
                         changed = True
@@ -1000,7 +932,6 @@ def recover_variables(func, sig, frame_info):
     # 2. Def-Use Web Construction via Union-Find
     uf = _UnionFind()
     word_nodes = set()
-<<<<<<< HEAD
     dword_nodes = set()
 
     for (s_id, reg_name), reaching in stmt_reaching.items():
@@ -1008,12 +939,6 @@ def recover_variables(func, sig, frame_info):
         if reg_name in GPR_DWORD:
             dword_nodes.add(use_key)
         elif reg_name in GPR_WORD:
-=======
-
-    for (s_id, reg_name), reaching in stmt_reaching.items():
-        use_key = (s_id, reg_name, "use")
-        if reg_name in GPR_WORD:
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
             word_nodes.add(use_key)
         for def_site in reaching:
             if def_site[0] == "clobber":
@@ -1028,13 +953,9 @@ def recover_variables(func, sig, frame_info):
             defs, _ = _get_stmt_defs(s)
             for reg_name, atoms, is_word in defs:
                 def_key = (id(s), atoms[0])
-<<<<<<< HEAD
                 if reg_name in GPR_DWORD:
                     dword_nodes.add(def_key)
                 elif is_word:
-=======
-                if is_word:
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
                     word_nodes.add(def_key)
                 for atom in atoms[1:]:
                     uf.union(def_key, (id(s), atom))
@@ -1076,10 +997,7 @@ def recover_variables(func, sig, frame_info):
                 param_map["a1"] = ("c", "b", p.type_str == "uint16_t")
 
     for root, members in groups.items():
-<<<<<<< HEAD
         is_dword = any(m in dword_nodes for m in members)
-=======
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         is_word = any(m in word_nodes for m in members)
         name = None
 
@@ -1094,16 +1012,12 @@ def recover_variables(func, sig, frame_info):
             name = f"v{var_counter}"
             var_counter += 1
 
-<<<<<<< HEAD
         if is_dword:
             width = "d"
         elif is_word:
             width = "w"
         else:
             width = "b"
-=======
-        width = "w" if is_word else "b"
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
         web_var[root] = ir.Var(name, width=width)
 
     # 4. Rewrite Statements using Virtual Variables
@@ -1119,7 +1033,6 @@ def recover_variables(func, sig, frame_info):
                 use_key = (id(s), reg_name, "use")
                 root = uf.find(use_key)
                 if root in web_var:
-<<<<<<< HEAD
                     var = web_var[root]
                     if getattr(var, "width", None) == "d":
                         if reg_name == "de":
@@ -1138,9 +1051,6 @@ def recover_variables(func, sig, frame_info):
                             uses_repl[reg_name] = var
                     else:
                         uses_repl[reg_name] = var
-=======
-                    uses_repl[reg_name] = web_var[root]
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
             dst_var = None
             defs, _ = _get_stmt_defs(s)
@@ -1219,11 +1129,7 @@ def recover_variables(func, sig, frame_info):
     virtual_vars = {}
 
     def _collect_vvar(e):
-<<<<<<< HEAD
         if isinstance(e, ir.Var) and not isinstance(e, ir.StackVar) and _is_vvar(e.name):
-=======
-        if isinstance(e, ir.Var) and not isinstance(e, ir.StackVar) and e.name.startswith("v") and e.name[1:].isdigit():
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
             virtual_vars[e.name] = (e, e.width)
         elif isinstance(e, ir.Bin):
             _collect_vvar(e.l)

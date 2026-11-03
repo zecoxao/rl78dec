@@ -48,22 +48,20 @@ def test_db_in_memory_persistence():
     db.set_sync_enabled(True)
     assert db.get_sync_enabled() is True
 
-<<<<<<< HEAD
     # 5. Comments
     db.set_line_comment(func_ea, 0x221D, "entry check")
     db.set_line_comment(func_ea, "line_5", "loop starts here")
     assert db.get_line_comments(func_ea) == {"8733": "entry check", "line_5": "loop starts here"}
     db.set_line_comment(func_ea, 0x221D, "")
     assert db.get_line_comments(func_ea) == {"line_5": "loop starts here"}
-=======
-    # 5. Window state persistence
+
+    # 6. Window state persistence
     db.save_window_state(True, 0x221D, lineno=15, col=4)
     ws = db.load_window_state()
     assert ws.get("is_open") is True
     assert ws.get("func_ea") == 0x221D
     assert ws.get("lineno") == 15
     assert ws.get("col") == 4
->>>>>>> f06cf6a077b335513c6f36cb0962615b3dade1da
 
     # 6. Clear
     db.clear_func_data(func_ea)
