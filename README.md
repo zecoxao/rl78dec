@@ -217,11 +217,6 @@ All 35 unit tests across 9 test suites verify:
 
 ---
 
-## Architecture Blueprint
-
-Detailed reverse-engineering notes on commercial decompiler engines (e.g. Hex-Rays `hexx64.dll`), common decompiler design pitfalls, and implementation blueprints are maintained in the project's [Decompiler Plugin Agent Architecture Plan](file:///C:/Users/Proxima/.gemini/antigravity/brain/73f40ee3-7112-4366-b1cc-d89b5949daf6/decompiler_plugin_agent_architecture_plan.md).
-
----
 
 ## Credits & License
 
